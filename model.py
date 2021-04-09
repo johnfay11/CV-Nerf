@@ -23,19 +23,18 @@ view dependence (only x as input) has difficulty representing specularities.
 
 
 class DensityModel(nn.Module):
-
     def __init__(self):
-        super(DensityModel,self).__init__()
+        super(DensityModel, self).__init__()
 
-        l1 = nn.Linear(3,256*3)
-        l2 = nn.Linear(3*256, 256 * 3)
+        l1 = nn.Linear(3, 256 * 3)
+        l2 = nn.Linear(3 * 256, 256 * 3)
         l3 = nn.Linear(3 * 256, 256 * 3)
-        l4 = nn.Linear(3*256, 256 * 3)
+        l4 = nn.Linear(3 * 256, 256 * 3)
         l5 = nn.Linear(3 * 256, 256 * 3)
         l6 = nn.Linear(3 * 256, 256 * 3)
         l7 = nn.Linear(3 * 256, 256 * 3)
         feature_vector = nn.Linear(3 * 256, 256)
-        density = nn.Linear(3*256,1)
+        density = nn.Linear(3*256, 1)
 
     def call(self, input):
         """
@@ -58,11 +57,9 @@ class DensityModel(nn.Module):
         return feat_vec, density
 
 
-
-
 class OutputModel(nn.Module):
     def __init__(self):
-        super(OutputModel,self).__init__()
+        super(OutputModel, self).__init__()
 
         layer = nn.Linear((256+2)*128,3)
 
@@ -79,8 +76,6 @@ class OutputModel(nn.Module):
         rgb = func.relu(self.layer(in_vec))
 
         return rgb
-
-
 
 
 def loss_func(gt_rgb,gt_density,rgb,density):
