@@ -61,6 +61,7 @@ def load_blender_data(basedir, half_res=False, testskip=1):
         else:
             skip = testskip
 
+        # iterate over frames and load poses (represented as a transformation matrix)
         for frame in meta['frames'][::skip]:
             fname = os.path.join(basedir, frame['file_path'] + '.png')
             imgs.append(imageio.imread(fname))
@@ -72,6 +73,7 @@ def load_blender_data(basedir, half_res=False, testskip=1):
         all_imgs.append(imgs)
         all_poses.append(poses)
 
+    # image index slits between train, val, and test
     i_split = [np.arange(counts[i], counts[i + 1]) for i in range(3)]
 
     imgs = np.concatenate(all_imgs, 0)
@@ -80,9 +82,11 @@ def load_blender_data(basedir, half_res=False, testskip=1):
     # unpack camera intrinsics
     H, W = imgs[0].shape[:2]
     camera_angle_x = float(meta['camera_angle_x'])
+
+    # focal length calculations: https://www.edmundoptics.com/knowledge-center/application-notes/imaging/understanding-focal-length-and-field-of-view/
     focal = .5 * W / np.tan(.5 * camera_angle_x)
 
-    # map poses (41 in total) to a sphere, which gives us a full 360 degree view of a synthetic object
+    # map poses (40 in total) to a sphere, which gives us a full 360 degree view of a synthetic object
     render_poses = torch.stack([pose_spherical(angle, -30.0, 4.0) for angle in np.linspace(-180, 180, 40 + 1)[:-1]], 0)
 
     if half_res:

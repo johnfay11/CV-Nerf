@@ -9,12 +9,12 @@ def parse_settings():
     # use standard config parser
     parser = configargparse.ArgumentParser('args')
 
-    parser.add_argument('--config_path', type=str, default=None)
+    parser.add_argument('--config', is_config_file=True)
     parser.add_argument('--name', type=str)
     parser.add_argument('--save_dir', type=str, default='./logs')
     parser.add_argument('--data_dir', type=str)
 
-    parser.add_argument("--dataset_type", type=str, default='llff',
+    parser.add_argument("--dtype", type=str, default='llff',
                         help='llff or blender')
 
     parser.add_argument('--n_rays', type=int, default=4096)
@@ -26,6 +26,8 @@ def parse_settings():
     parser.add_argument('--L_ang', type=int, default=4)
 
     parser.add_argument('--lr', type=float, default=5e-4, help='learning rate')
+    parser.add_argument('--lr_decay', type=float, default=250, help='learning rate decay')
+
     parser.add_argument('--iter', type=int )
 
     # we might not need this parameter (could set to size of dataset)
@@ -37,7 +39,7 @@ def parse_settings():
 
 
 def load_dataset(args):
-    if args.dataset_type != 'llff' and args.dataset_type != 'blender':
+    if args.dtype != 'llff' and args.dtype != 'blender':
         raise ValueError('Invalid data type. Must be one of llff or blender.')
 
     # here we can probably plug in the LLFF library and blender extensions.
@@ -50,10 +52,15 @@ def load_dataset(args):
 
 
 def main():
-    config = parse_settings()
-    args = config.parse_args()
+    args = parse_settings()
 
-    images, poses, cam_params, render_poses, test_im = load_dataset(args)
+    '''
+    images: numpy array of shape (total_ims, im_height, im_width, rgba)
+    poses: numpy array of shape (total_ims, 4, 4)
+    cam_params: list of the form [H, W, f]
+    i_split: list of the form [train_indices, val_indices, test_indices]
+    '''
+    images, poses, render_poses, cam_params, i_split = load_dataset(args)
 
     # unpack camera intrinsics
     height, width, f = cam_params
@@ -66,7 +73,7 @@ def main():
     else:
         raise ValueError("CUDA is not available")
 
-    optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lrate, betas=(0.9, 0.999))
+    optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, betas=(0.9, 0.999))
     steps = args.iter
 
     # training loop
@@ -74,5 +81,5 @@ def main():
         pass
 
 
-if __name__ == 'main':
+if __name__ == '__main__':
     main()

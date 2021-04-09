@@ -27,7 +27,10 @@ or LLFF library? So, it's probably not entirely necessary to implement all of th
 - [ ] Reimplement the MLP 9-layer MLP discussed in the paper (using high-frequency input encoding mentioned in paper; see architecture below.)
 - [ ] Write rendering function. 
 - [ ] Write loss function. 
+- [ ] Add Tensorboard support
 
+## Other 
+- [ ] Add requirements.txt file.
 
 # Model Architecture 
 ![Arch](arch.png)
