@@ -26,8 +26,13 @@ or LLFF library? So, it's probably not entirely necessary to implement all of th
 - [ ] Write a function that computes the ray for each pixel in an image using camera intrinsics (height, width, focal length) and a pose.
 - [ ] Reimplement the MLP 9-layer MLP discussed in the paper (using high-frequency input encoding mentioned in paper; see architecture below.)
 - [ ] Write rendering function. 
-- [ ] Write loss function. 
+- [ ] Write loss function.
+- [ ] Ensure the fine and coarse networks are implemented as separate networks.  
+- [ ] Add Tensorboard support
+- [ ] Add support for random Gaussian noise during training (p. 17)
 
+## Other 
+- [ ] Add requirements.txt file.
 
 # Model Architecture 
 ![Arch](arch.png)
