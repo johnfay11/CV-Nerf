@@ -1,6 +1,10 @@
 import configargparse
 import torch
 import numpy as np
+import copy
+
+import os
+import imageio
 
 from data_helpers import load_blender_data
 from model import OutputModel
@@ -41,6 +45,9 @@ def parse_settings():
     # white background is needed to accurately reproduce the synthetic examples
     parser.add_argument('--white_bkg', type=bool, default=False)
     parser.add_argument('--noise', type=float, default=1.0)
+
+    parser.add_argument('--save_freq', type=int, default=2500)
+    parser.add_argument('--video_freq', type=int, default=2500)
     return parser.parse_args()
 
 
@@ -168,13 +175,13 @@ def inv_transform_sampling(pts, weights, n):
 
     # rescale into [t_n, t_f] domain
     scale = cdf[..., 1] - cdf[..., 0]
-    # need this or else NANs occur
+    # need this for numerical stability
     scale = torch.where(scale < EPS, torch.ones_like(scale), scale)
     return (pts[..., 1] - pts[..., 0]) * ((unif_samp - cdf[..., 0]) / scale) + cdf[..., 0]
 
 
-# TODO: add option to render from fundamental matrix
 def render(cam_intrs, rays, model, model_fine, bounds, args):
+    infer = model is None
     r_origins, r_dirs = rays
 
     # represents theta and phi, as specified in the paper
@@ -205,6 +212,10 @@ def render(cam_intrs, rays, model, model_fine, bounds, args):
     # TODO: add model, which ingests coords and d_vec
     model = None
 
+    if not infer:
+        # TODO: actually infer for coarse datapoints
+        pass
+
     # Returned from model; tensor of size n_rays x n_samples x 4
     rgba = torch.rand(coords.shape)
 
@@ -224,16 +235,64 @@ def render(cam_intrs, rays, model, model_fine, bounds, args):
         # compute coordinates, as shown above
         coords = r_origins[..., None, :] + r_dirs[..., None, :] * t_samples[..., :, None]
 
-        # TODO: add fine model
-        model_fine = None
+    # TODO: add fine model
+    model_fine = None
 
-        # Returned from model; tensor of size n_rays x n_samples x 4
-        rgba_f = torch.rand(coords.shape)
+    # Returned from model; tensor of size n_rays x n_samples x 4
+    rgba_f = torch.rand(coords.shape)
 
-        # tensor of size n_rays x 3
-        rgb_f, weights_f = process_volume_info(rgba_f, t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
+    # tensor of size n_rays x 3
+    rgb_f, weights_f = process_volume_info(rgba_f, t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
     return rgb, rgb_f
 
+
+def render_full(render_poses, cam_params, save_dir, fine_model, bounds, args):
+    height, width, f = cam_params
+
+    args = copy.deepcopy(args)
+    args['noise'] = 0.0
+
+    pred_ims = []
+    for i, pose_mat in enumerate(render_poses):
+        r_origins, r_dirs = compute_rays(height, width, f, torch.Tensor(pose_mat))
+
+        h_grid = torch.linspace(0, height - 1, height)
+        w_grid = torch.linspace(0, width - 1, width)
+        grid = torch.meshgrid(h_grid, w_grid)
+        grid = torch.stack(grid, -1)
+
+        grid = torch.reshape(grid, [-1, 2])
+
+        batch_size = args.n_rays
+        n_batches = int(np.ceil((height * width) / batch_size))
+
+        _d_seen_indices = [] # TODO: remove after testing
+        for j in range(n_batches):
+            batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size), height * width)
+
+            if args.debug:
+                _d_seen_indices.extend(list(batch_indices))
+
+            batch_pixels = grid[batch_indices].long()
+
+            r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
+            r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
+            batch_rays = torch.stack([r_origins, r_dirs], 0)
+
+            _, rgb_f = render(cam_params, pose_mat[:3, :4], batch_rays, None, fine_model, bounds, args)
+            pred_ims.append(pred_ims)
+
+        if args.debug:
+            assert _d_seen_indices == list(range(height * width))
+
+        # convert to 8bytes
+        im_8 = (255 * np.clip(pred_ims[-1], 0, 1)).astype(np.uint8)
+        filename = os.path.join(save_dir, '{:04d}.png'.format(i))
+        imageio.imwrite(filename, im_8)
+
+    pred_ims = [x.cpu().numpy() for x in pred_ims]
+    pred_ims = np.stack(pred_ims, 0)
+    return pred_ims
 
 def decayed_learning_rate(step, decay_steps, initial_lr, decay_rate=0.1):
   return initial_lr * decay_rate ^ (step / decay_steps)
@@ -275,32 +334,36 @@ def main():
 
     # training loop
     for i in range(steps):
-        # select random image
-        im_idx = np.random.choice(train_idx)
-        im = images[im_idx]
+        step += 1
 
-        # extract projection matrix:
-        # (https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera)
-        pose = poses[im_idx, :3, :4]
+        # don't collect gradients during preprocessing
+        with torch.no_grad():
+            # select random image
+            im_idx = np.random.choice(train_idx)
+            im = images[im_idx]
 
-        # both origins and orientations are needed to determine a ray
-        r_origins, r_dirs = compute_rays(height, width, f, torch.Tensor(pose))
+            # extract projection matrix:
+            # (https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera)
+            pose = poses[im_idx, :3, :4]
 
-        # select a random subset of rays from a H x W grid
-        h_grid = torch.linspace(0, height - 1, height)
-        w_grid = torch.linspace(0, width - 1, width)
-        grid = torch.meshgrid(h_grid, w_grid)
-        grid = torch.stack(grid, -1)
+            # both origins and orientations are needed to determine a ray
+            r_origins, r_dirs = compute_rays(height, width, f, torch.Tensor(pose))
 
-        # (H x W, 2) tensor containing all possible pixels
-        grid = torch.reshape(grid, [-1, 2])
-        batch_indices = np.random.choice(grid.shape[0], size=[args.n_rays], replace=False)
-        batch_pixels = grid[batch_indices].long()
+            # select a random subset of rays from a H x W grid
+            h_grid = torch.linspace(0, height - 1, height)
+            w_grid = torch.linspace(0, width - 1, width)
+            grid = torch.meshgrid(h_grid, w_grid)
+            grid = torch.stack(grid, -1)
 
-        r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
-        r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
-        batch_rays = torch.stack([r_origins, r_dirs], 0)
-        batch_pixels = im[batch_pixels[:, 0], batch_pixels[:, 1]]
+            # (H x W, 2) tensor containing all possible pixels
+            grid = torch.reshape(grid, [-1, 2])
+            batch_indices = np.random.choice(grid.shape[0], size=[args.n_rays], replace=False)
+            batch_pixels = grid[batch_indices].long()
+
+            r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
+            r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
+            batch_rays = torch.stack([r_origins, r_dirs], 0)
+            batch_pixels = im[batch_pixels[:, 0], batch_pixels[:, 1]]
 
         # renders rays into RGB values
         rgb_c, rgb_f = render([height, width, f], batch_rays, model, model_fine, bounds, args)
@@ -319,6 +382,20 @@ def main():
         #lr = decayed_learning_rate(step, DECAY_SIZE * args.lr_decay, args.lr)
         #for g in optimizer.param_groups:
         #    g['lr'] = lr
+
+        with torch.no_grad():
+            if step % args.video_freq == 0:
+                pred_frames = render_full(render_poses, [height, width, f])
+
+            if step % args.save_freq == 0:
+                path = os.path.join(args.base_dir, args.name, '{:d}.pt'.format(i))
+                torch.save({
+                    'iter': step,
+                    'model_coarse_dict': model.state_dict(),
+                    'model_fine_dict': model_fine.state_dict(),
+                    'optimizer_dict': optimizer.state_dict(),
+                }, path)
+                print('Saved checkpoints at', path)
 
 
 if __name__ == '__main__':
