@@ -99,4 +99,4 @@ def load_blender_data(basedir, half_res=False, testskip=1):
             # resize image; TODO: determine if we can get around using opencv
             imgs_half_res[i] = cv2.resize(img, (W, H), interpolation=cv2.INTER_AREA)
         imgs = imgs_half_res
-    return imgs, poses, render_poses, [H, W, focal], i_split
+    return imgs, poses, render_poses, [H, W, focal], i_split, [2.0, 6.0]

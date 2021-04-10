@@ -36,8 +36,10 @@ def parse_settings():
 
     # this is useful for reducing the size of blender models
     parser.add_argument('--half_res', action='store_true')
-
     parser.add_argument('--debug', type=bool, default=False)
+
+    # white background is needed to accurately reproduce the synthetic examples
+    parser.add_argument('--white_bkg', type=bool, default=False)
     return parser.parse_args()
 
 
@@ -82,6 +84,39 @@ def compute_rays(h, w, f, pose):
     return origins, dirs
 
 
+# TODO: add option to render from fundamental matrix
+def render(cam_intrs, rays, model, bounds, args):
+    r_origins, r_dirs = rays
+
+    # represents theta and phi, as specified in the paper
+    d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
+    d_vec = torch.reshape(d_vec, [-1, 3]).float()
+
+    # partition [0, 1] using n points and rescale into [t_n, t_f]
+    t_samples = torch.linspace(0., 1., steps=args.n_samples)
+    t_samples = bounds[0] * (1. - t_samples) + bounds[1] * t_samples
+    t_samples = t_samples.expand([args.n_rays, args.n_samples])
+
+    # get n_rays * n_samples random samples in [0, 1]
+    t_r = torch.rand(t_samples.shape)
+
+    # rescale by computing the middle of each interval
+    midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
+
+    # add back lowest and highest sample
+    upper = torch.cat([midpoints, t_samples[..., -1:]], -1)
+    lower = torch.cat([t_samples[..., :1], midpoints], -1)
+    t_samples = lower + (upper - lower) * t_r
+
+    # compute the (x, y, z) coords of each timestep using ray origins and directions
+    # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
+    coords = r_dirs[..., None, :] * t_samples[..., :, None]
+    coords = r_origins[..., None, :] + coords
+
+    # TODO: add model, which ingests coords and d_vec
+    model = None
+
+
 def main():
     args = parse_settings()
 
@@ -90,9 +125,9 @@ def main():
     poses: numpy array of shape (total_ims, 4, 4)
     cam_params: list of the form [H, W, f]
     i_split: list of the form [train_indices, val_indices, test_indices]
+    bounds: list of the form [near bound, far bound]
     '''
-    images, poses, render_poses, cam_params, i_split = load_dataset(args)
-
+    images, poses, render_poses, cam_params, i_split, bounds = load_dataset(args)
     train_idx, val_idx, test_idx = i_split
 
     # unpack camera intrinsics
@@ -110,17 +145,41 @@ def main():
 
     #optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, betas=(0.9, 0.999))
     steps = args.iter
+    step = 0
 
     # training loop
     for i in range(steps):
-
         # select random image
         im_idx = np.random.choice(train_idx)
         im = images[im_idx]
 
         # extract projection matrix: (https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera)
         pose = poses[im_idx, :3, :4]
-        r_origins, r_dirs = compute_rays(height, width, f, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
+
+        # both origins and orientations are needed to determine a ray
+        r_origins, r_dirs = compute_rays(height, width, f, torch.Tensor(pose))
+
+        # select a random subset of rays from a H x W grid
+        h_grid = torch.linspace(0, height - 1, height)
+        w_grid = torch.linspace(0, width - 1, width)
+        grid = torch.meshgrid(h_grid, w_grid)
+        grid = torch.stack(grid, -1)
+
+        # (H x W, 2) tensor containing all possible pixels
+        grid = torch.reshape(grid, [-1, 2])
+        batch_indices = np.random.choice(grid.shape[0], size=[args.n_rays], replace=False)
+        batch_pixels = grid[batch_indices].long()
+
+        r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
+        r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
+        batch_rays = torch.stack([r_origins, r_dirs], 0)
+        batch_pixels = im[batch_pixels[:, 0], batch_pixels[:, 1]]
+
+        rgb = render([height, width, f], batch_rays, model, bounds, args)
+        optimizer.zero_grad()
+
+        # TODO: update learning rate, backprop
+
 
 
 if __name__ == '__main__':
