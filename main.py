@@ -84,8 +84,66 @@ def compute_rays(h, w, f, pose):
     return origins, dirs
 
 
+def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
+    INF_DIST = 1e10
+    EPS = 1e-10 # for numerical stability (see: https://effectivemachinelearning.com/PyTorch/7._Numerical_stability_in_PyTorch)
+
+    # generate noise for volume channel (see p. 19) for more information
+    _noise = 0.0
+    if noise > 0.0:
+        _noise = torch.random.normal(raw_rgba[..., 3].shape) * noise
+
+    # compute distances between samples (denotes as deltas in equation (3))
+    deltas = t_samples[..., 1:] - t_samples[..., :-1]
+    last_delta = torch.Tensor([INF_DIST]).expand(deltas[..., :1].shape)
+    deltas = torch.cat([deltas, last_delta], -1) * torch.norm(r_dirs[..., None, :], dim=-1)
+
+    # alpha compositing; ensure that relu has already been applied!!
+    alpha = 1.0 - torch.exp(-(raw_rgba[..., 3] + _noise) * deltas)
+
+    # apply sigmoid activation to colors (see architecture diagram); ensure that sigmoid has already been applied!!
+    colors = raw_rgba[..., :3]
+
+    # compute T_i(s) using alpha values (see eq. (3))
+    T_weights = torch.cat([torch.ones((alpha.shape[0], 1)), 1. - alpha + EPS], -1)
+
+    # have to use a roundabout way of computing cumprod because of the way it's not exclusive in pytorch
+    T_weights = alpha * torch.cumprod(T_weights, -1)[:, :-1]
+
+    # extract ray-wise RGB values by summing along the approximated path integral (eq. (3))
+    rgb_map = torch.sum(T_weights[..., None] * colors, -2)
+
+    # add background if specified
+    if bkg:
+        # in RGB space, 1.0 is white
+        rgb_map += (1.0 - torch.sum(T_weights, -1)[..., None])
+
+    return rgb_map, T_weights
+
+
+def inv_transform_sampling(pts, weights, n):
+    """
+    Get of sampled points and corresponding weights, we perform inverse transform sampling:
+    https://en.wikipedia.org/wiki/Inverse_transform_sampling. In essence, this technique allows us
+    to sample n points from the weight pdf.
+    """
+
+    # numerical stability
+    EPS = 1e-6
+    weights += weights + EPS
+
+    # map weights to a probability distribution
+    pdf = weights / torch.sum(weights, -1, keepdim=True)
+
+    # construct cdf from pdf
+    cdf = [torch.zeros_like(pdf[..., :1]), pdf]
+    cdf = torch.cumsum(pdf, -1)
+    cdf = torch.cat(cdf, -1)
+    return None
+
+
 # TODO: add option to render from fundamental matrix
-def render(cam_intrs, rays, model, bounds, args):
+def render(cam_intrs, rays, model, model_fine, bounds, args):
     r_origins, r_dirs = rays
 
     # represents theta and phi, as specified in the paper
@@ -104,9 +162,9 @@ def render(cam_intrs, rays, model, bounds, args):
     midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
 
     # add back lowest and highest sample
-    upper = torch.cat([midpoints, t_samples[..., -1:]], -1)
-    lower = torch.cat([t_samples[..., :1], midpoints], -1)
-    t_samples = lower + (upper - lower) * t_r
+    u = torch.cat([midpoints, t_samples[..., -1:]], -1)
+    l = torch.cat([t_samples[..., :1], midpoints], -1)
+    t_samples = l + (u - l) * t_r
 
     # compute the (x, y, z) coords of each timestep using ray origins and directions
     # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
@@ -115,6 +173,19 @@ def render(cam_intrs, rays, model, bounds, args):
 
     # TODO: add model, which ingests coords and d_vec
     model = None
+    model_fine = None
+
+    # Returned from model; tensor of size n_rays x n_samples x 4
+    rgba = torch.rand(coords.shape)
+
+    # tensor of size n_rays x 3
+    rgb, weights = process_volume_info(rgba, t_samples, r_dirs, noise=1.0, bkg=args.white_bkg)
+
+    midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
+    _weights = weights[..., 1:-1] # remove weights not used for hierarchical sampling
+
+    with torch.no_grad():
+        fine_samples = inv_transform_sampling(midpoints, _weights, args.n_fine_samples)
 
 
 def main():
@@ -135,8 +206,10 @@ def main():
     height, width = int(height), int(width)
 
     model = None
+    model_fine = None
     if torch.cuda.is_available():
         model = model.cuda()
+        model_fine = model_fine.cuda()
         images = torch.Tensor(images).cuda()
         poses = torch.Tensor(poses).cuda()
         render_poses = torch.Tensor(render_poses).cuda()
@@ -153,7 +226,8 @@ def main():
         im_idx = np.random.choice(train_idx)
         im = images[im_idx]
 
-        # extract projection matrix: (https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera)
+        # extract projection matrix:
+        # (https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera)
         pose = poses[im_idx, :3, :4]
 
         # both origins and orientations are needed to determine a ray
@@ -175,11 +249,11 @@ def main():
         batch_rays = torch.stack([r_origins, r_dirs], 0)
         batch_pixels = im[batch_pixels[:, 0], batch_pixels[:, 1]]
 
-        rgb = render([height, width, f], batch_rays, model, bounds, args)
-        optimizer.zero_grad()
+        # renders rays into RGB values
+        rgb_c, rgb_f = render([height, width, f], batch_rays, model, bounds, args)
 
-        # TODO: update learning rate, backprop
-
+        #optimizer.zero_grad()
+        # TODO: update learning rate, backprop, loss
 
 
 if __name__ == '__main__':

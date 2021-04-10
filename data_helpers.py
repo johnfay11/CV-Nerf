@@ -3,8 +3,6 @@ import imageio
 import json
 
 import torch
-import torch.nn.functional as F
-
 import numpy as np
 import cv2
 
