@@ -2,6 +2,7 @@ import numpy as np
 import torch as torch
 import torch.nn as nn
 import torch.nn.functional as func
+from math import sin,cos,pi
 
 
 """
@@ -22,76 +23,71 @@ view dependence (only x as input) has difficulty representing specularities.
 """
 
 
-class DensityModel(nn.Module):
-
+class Model(nn.Module):
     def __init__(self):
-        super(DensityModel,self).__init__()
+        super(Model, self).__init__()
 
-        l1 = nn.Linear(60,256*3)
-        l2 = nn.Linear(3*256, 256 * 3)
-        l3 = nn.Linear(3 * 256, 256 * 3)
-        l4 = nn.Linear(3*256, 256 * 3)
-        l5 = nn.Linear(3 * 256, 256 * 3)
-        l6 = nn.Linear(3 * 256, 256 * 3)
-        l7 = nn.Linear(3 * 256, 256 * 3)
-        feature_vector = nn.Linear(3 * 256, 256)
-        density = nn.Linear(3*256,1)
+        self.xyz_L = 10
+        self.angle_L = 4
 
+        l1 = nn.Linear(60, 256)
+        l2 = nn.Linear(256, 256)
+        l3 = nn.Linear(256, 256)
+        l4 = nn.Linear(256, 256)
+        l5 = nn.Linear(256+60, 256)
 
-    def translate_pos(self, pos):
-        L = 10
+        l6 = nn.Linear(256, 256)
+        l7 = nn.Linear(256, 256)
+        l8 = nn.Linear(256,257)
+
+        l9 = nn.Linear(256+24,128)
+        l10 = nn.Linear(128,3)
+
+    def pos_encoding(self,pos,L):
+        """
+        :param pos: pos positions, or angle unit vector (assumed dtype is python list)
+        :param L: defines number of terms in encoding (2*L terms)
+        :return: FloatTensor input for network
+        """
         out = []
+        for i in range(len(pos)):
+            for j in range(L):
+                out.append(sin((2**j)*pi*pos[i]))
+                out.append(cos((2**j)*pi*pos[i]))
 
-        for i in range(L):
-            out.append(np.sin((2**i)*np.pi*))
-
+        out = torch.FloatTensor(out)
 
         return out
 
-
-    def call(self, input):
+    def call(self, xyz,view_angle):
         """
-        :param input: (x,y,z) position coordinate
-        :return: feature_vector, density: feature vector is a 256-D vector which is passed into
-        the main network. Density is the volume density at (x,y,z). Density is a 1-D vector
+        :param xyz: (x,y,z) position coordinate
+        :param view_angle: view angle unit vector
+            (both params assumed to be python lists)
         """
-
+        input = self.pos_encoding(xyz,self.xyz_L)
         out = func.relu(self.l1(input))
         out = func.relu(self.l2(out))
         out = func.relu(self.l3(out))
         out = func.relu(self.l4(out))
+        out = torch.cat((input,out))
         out = func.relu(self.l5(out))
         out = func.relu(self.l6(out))
         out = func.relu(self.l7(out))
-        ## TODO: not sure what should feed into density layer (l7 or feature vec?)
-        feat_vec = func.relu(self.feature_vector(out))
-        density = func.relu(self.density(out))
+        out = func.relu(self.l8(out))
 
-        return feat_vec, density
+        density = out[0]
+        feat_vec = out[1:]
 
+        out = feat_vec
 
+        angle_encoding = self.pos_encoding(view_angle,self.angle_L)
 
+        out = torch.cat((out,angle_encoding))
+        out = func.relu(self.l9(out))
+        out = self.l10(out)
 
-class OutputModel(nn.Module):
-    def __init__(self):
-        super(OutputModel,self).__init__()
-
-        layer = nn.Linear((256+2)*128,3)
-
-    def call(self,feat_vec,theta_x,theta_y):
-        """
-
-        :param feat_vec: from DensityModel (256-D torch tensor)
-        :param theta_x: 1-D torch tensor
-        :param theta_y: 1-D torch tensor
-        :return: 3-D torch tensor (r,g,b)
-        """
-
-        in_vec = torch.cat((feat_vec,theta_x,theta_y))
-        rgb = func.relu(self.layer(in_vec))
-
-        return rgb
-
+        return out
 
 
 
