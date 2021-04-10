@@ -130,16 +130,46 @@ def inv_transform_sampling(pts, weights, n):
 
     # numerical stability
     EPS = 1e-6
-    weights += weights + EPS
+    weights += EPS
 
     # map weights to a probability distribution
     pdf = weights / torch.sum(weights, -1, keepdim=True)
 
-    # construct cdf from pdf
+    # construct cdf (denote F) from pdf
     cdf = [torch.zeros_like(pdf[..., :1]), pdf]
-    cdf = torch.cumsum(pdf, -1)
+    cdf = torch.cumsum(cdf, -1)
     cdf = torch.cat(cdf, -1)
-    return None
+
+    # uniformly sample points
+    unif_samp = torch.rand(list(cdf.shape[:-1]) + [n])
+
+    """
+    Invert the CDF and compute F^{-1}(U). This reduces to a searching for domain values of F that contain the 
+    values of U and then rescaling. See the following source for more information:
+    - http://www.columbia.edu/~ks20/4404-Sigman/4404-Notes-ITM.pdf 
+    - https://stephens999.github.io/fiveMinuteStats/inverse_transform_sampling.html 
+    - http://www.cse.psu.edu/~rtc12/CSE586/lectures/cse586samplingPreMCMC.pdf
+    """
+
+    # luckily, searchsorted implements this searching functionality!
+    i = torch.searchsorted(cdf, unif_samp, right=True)
+
+    # upper and lower bounds of U w.r.t. F
+    upper = torch.min((cdf.shape[-1] - 1) * torch.ones_like(i), i)
+    lower = torch.max(torch.zeros_like(i - 1), i - 1)
+    indices = torch.stack([lower, upper], -1)
+
+    # rescale input parameters to match shape of uniformly chosen points
+    cdf = cdf.unsqueeze(1).expand([indices.shape[0], indices.shape[1], indices.shape[-1]])
+    cdf = torch.gather(cdf, 2, indices)
+    pts = pts.unsqueeze(1).expand([indices.shape[0], indices.shape[1], indices.shape[-1]])
+    pts = torch.gather(pts, 2, indices)
+
+    # rescale into [t_n, t_f] domain
+    scale = cdf[..., 1] - cdf[..., 0]
+    # need this or else NANs occur
+    scale = torch.where(scale < EPS, torch.ones_like(scale), scale)
+    return (pts[..., 1] - pts[..., 0]) * ((unif_samp - cdf[..., 0]) / scale) + cdf[..., 0]
 
 
 # TODO: add option to render from fundamental matrix
