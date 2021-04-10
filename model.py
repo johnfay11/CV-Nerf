@@ -27,7 +27,7 @@ class DensityModel(nn.Module):
     def __init__(self):
         super(DensityModel,self).__init__()
 
-        l1 = nn.Linear(3,256*3)
+        l1 = nn.Linear(60,256*3)
         l2 = nn.Linear(3*256, 256 * 3)
         l3 = nn.Linear(3 * 256, 256 * 3)
         l4 = nn.Linear(3*256, 256 * 3)
@@ -36,6 +36,18 @@ class DensityModel(nn.Module):
         l7 = nn.Linear(3 * 256, 256 * 3)
         feature_vector = nn.Linear(3 * 256, 256)
         density = nn.Linear(3*256,1)
+
+
+    def translate_pos(self, pos):
+        L = 10
+        out = []
+
+        for i in range(L):
+            out.append(np.sin((2**i)*np.pi*))
+
+
+        return out
+
 
     def call(self, input):
         """
