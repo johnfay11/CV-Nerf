@@ -40,6 +40,7 @@ def parse_settings():
 
     # white background is needed to accurately reproduce the synthetic examples
     parser.add_argument('--white_bkg', type=bool, default=False)
+    parser.add_argument('--noise', type=float, default=1.0)
     return parser.parse_args()
 
 
@@ -203,19 +204,39 @@ def render(cam_intrs, rays, model, model_fine, bounds, args):
 
     # TODO: add model, which ingests coords and d_vec
     model = None
-    model_fine = None
 
     # Returned from model; tensor of size n_rays x n_samples x 4
     rgba = torch.rand(coords.shape)
 
     # tensor of size n_rays x 3
-    rgb, weights = process_volume_info(rgba, t_samples, r_dirs, noise=1.0, bkg=args.white_bkg)
+    rgb, weights = process_volume_info(rgba, t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
 
-    midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
-    _weights = weights[..., 1:-1] # remove weights not used for hierarchical sampling
+    # remove weights not used for hierarchical sampling
+    avg_pts = (t_samples[..., 1:] + t_samples[..., :-1]) / 2.0
+    _weights = weights[..., 1:-1]
 
+    rgb_f = None
     with torch.no_grad():
-        fine_samples = inv_transform_sampling(midpoints, _weights, args.n_fine_samples)
+        fine_samples = inv_transform_sampling(avg_pts, _weights, args.n_fine_samples)
+        # Combine coarse and fine samples; TODO: determine if this is right.
+        t_samples = torch.cat([t_samples, fine_samples], -1)
+
+        # compute coordinates, as shown above
+        coords = r_origins[..., None, :] + r_dirs[..., None, :] * t_samples[..., :, None]
+
+        # TODO: add fine model
+        model_fine = None
+
+        # Returned from model; tensor of size n_rays x n_samples x 4
+        rgba_f = torch.rand(coords.shape)
+
+        # tensor of size n_rays x 3
+        rgb_f, weights_f = process_volume_info(rgba_f, t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
+    return rgb, rgb_f
+
+
+def decayed_learning_rate(step, decay_steps, initial_lr, decay_rate=0.1):
+  return initial_lr * decay_rate ^ (step / decay_steps)
 
 
 def main():
@@ -237,6 +258,7 @@ def main():
 
     model = None
     model_fine = None
+    params = None
     if torch.cuda.is_available():
         model = model.cuda()
         model_fine = model_fine.cuda()
@@ -246,7 +268,8 @@ def main():
     elif not args.debug:
         raise ValueError("CUDA is not available")
 
-    #optimizer = torch.optim.Adam(params=model.parameters(), lr=args.lr, betas=(0.9, 0.999))
+    #optimizer = torch.optim.Adam(params=params, lr=args.lr, betas=(0.9, 0.999))
+
     steps = args.iter
     step = 0
 
@@ -280,10 +303,22 @@ def main():
         batch_pixels = im[batch_pixels[:, 0], batch_pixels[:, 1]]
 
         # renders rays into RGB values
-        rgb_c, rgb_f = render([height, width, f], batch_rays, model, bounds, args)
+        rgb_c, rgb_f = render([height, width, f], batch_rays, model, model_fine, bounds, args)
 
         #optimizer.zero_grad()
-        # TODO: update learning rate, backprop, loss
+        loss = torch.mean((rgb_c - batch_pixels) ** 2)
+        loss += 0.0 if rgb_f is None else torch.mean((rgb_f - batch_pixels) ** 2)
+
+        #optimizer.step()
+
+
+        DECAY_RATE = 0.1
+        DECAY_SIZE = 1000
+
+        # update learning rate: https://tinyurl.com/48makybr using exponential decay
+        #lr = decayed_learning_rate(step, DECAY_SIZE * args.lr_decay, args.lr)
+        #for g in optimizer.param_groups:
+        #    g['lr'] = lr
 
 
 if __name__ == '__main__':
