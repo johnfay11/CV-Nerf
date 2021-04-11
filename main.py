@@ -391,6 +391,7 @@ def main():
                 print('Loss: ' + str(loss))
                 print('Step time: ' + str(step_time))
 
+                # source: https://stackoverflow.com/questions/58216000/get-total-amount-of-free-gpu-memory-and-available-using-pytorch
                 t = torch.cuda.get_device_properties(0).total_memory
                 r = torch.cuda.memory_reserved(0)
                 a = torch.cuda.memory_allocated(0)

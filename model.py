@@ -98,7 +98,7 @@ class Model(nn.Module):
         for ray in range(X.shape[0]):
             X_ang[ray, :] = Model._pos_encoding(view_angle, X[ray, 0], self.angle_L)
 
-        out = torch.cat([out, X_ang])
+        out = torch.cat([out, X_ang], -1)
         out = func.relu(self.l9(out))
         out = self.l10(out)
         rgb = func.sigmoid(out)
