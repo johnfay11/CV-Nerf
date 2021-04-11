@@ -5,6 +5,7 @@ import copy
 
 import os
 import imageio
+import time
 
 from data_helpers import load_blender_data
 from model import Model
@@ -48,6 +49,7 @@ def parse_settings():
 
     parser.add_argument('--save_freq', type=int, default=2500)
     parser.add_argument('--video_freq', type=int, default=2500)
+    parser.add_argument('--update-fred', type=int, default=50)
     return parser.parse_args()
 
 
@@ -180,54 +182,51 @@ def inv_transform_sampling(pts, weights, n):
     return (pts[..., 1] - pts[..., 0]) * ((unif_samp - cdf[..., 0]) / scale) + cdf[..., 0]
 
 
-def render(cam_intrs, rays, model, model_fine, bounds, args):
-    infer = model is None
-    r_origins, r_dirs = rays
+def render(rays, coarse_model, fine_model, bounds, args):
+    inference = coarse_model is None
 
-    # represents theta and phi, as specified in the paper
-    d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
-    d_vec = torch.reshape(d_vec, [-1, 3]).float()
+    with torch.no_grad():
+        r_origins, r_dirs = rays
 
-    # partition [0, 1] using n points and rescale into [t_n, t_f]
-    t_samples = torch.linspace(0., 1., steps=args.n_samples)
-    t_samples = bounds[0] * (1. - t_samples) + bounds[1] * t_samples
-    t_samples = t_samples.expand([args.n_rays, args.n_samples])
+        # represents theta and phi, as specified in the paper
+        d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
+        d_vec = torch.reshape(d_vec, [-1, 3]).float()
 
-    # get n_rays * n_samples random samples in [0, 1]
-    t_r = torch.rand(t_samples.shape)
+        # partition [0, 1] using n points and rescale into [t_n, t_f]
+        t_samples = torch.linspace(0., 1., steps=args.n_samples)
+        t_samples = bounds[0] * (1. - t_samples) + bounds[1] * t_samples
+        t_samples = t_samples.expand([args.n_rays, args.n_samples])
 
-    # rescale by computing the middle of each interval
-    midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
+        # get n_rays * n_samples random samples in [0, 1]
+        t_r = torch.rand(t_samples.shape)
 
-    # add back lowest and highest sample
-    u = torch.cat([midpoints, t_samples[..., -1:]], -1)
-    l = torch.cat([t_samples[..., :1], midpoints], -1)
-    t_samples = l + (u - l) * t_r
+        # rescale by computing the middle of each interval
+        midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
 
-    # compute the (x, y, z) coords of each timestep using ray origins and directions
-    # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
-    coords = r_dirs[..., None, :] * t_samples[..., :, None]
-    coords = r_origins[..., None, :] + coords
+        # add back lowest and highest sample
+        u = torch.cat([midpoints, t_samples[..., -1:]], -1)
+        l = torch.cat([t_samples[..., :1], midpoints], -1)
+        t_samples = l + (u - l) * t_r
 
-    # TODO: add model, which ingests coords and d_vec
-    model = None
+        # compute the (x, y, z) coords of each timestep using ray origins and directions
+        # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
+        coords = r_dirs[..., None, :] * t_samples[..., :, None]
+        coords = r_origins[..., None, :] + coords
 
-    if not infer:
-        # TODO: actually infer for coarse datapoints
-        pass
+    # duplicate angle for each point
+    #_d_vec = d_vec[..., None, :].expand(coords.shape)
 
     # Returned from model; tensor of size n_rays x n_samples x 4
-    rgba = torch.rand(coords.shape)
+    rgba = coarse_model(coords, d_vec) if coarse_model is not None else None
 
     # tensor of size n_rays x 3
     rgb, weights = process_volume_info(rgba, t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
 
-    # remove weights not used for hierarchical sampling
-    avg_pts = (t_samples[..., 1:] + t_samples[..., :-1]) / 2.0
-    _weights = weights[..., 1:-1]
-
-    rgb_f = None
     with torch.no_grad():
+        # remove weights not used for hierarchical sampling
+        avg_pts = (t_samples[..., 1:] + t_samples[..., :-1]) / 2.0
+        _weights = weights[..., 1:-1]
+
         fine_samples = inv_transform_sampling(avg_pts, _weights, args.n_fine_samples)
         # Combine coarse and fine samples; TODO: determine if this is right.
         t_samples = torch.cat([t_samples, fine_samples], -1)
@@ -235,18 +234,17 @@ def render(cam_intrs, rays, model, model_fine, bounds, args):
         # compute coordinates, as shown above
         coords = r_origins[..., None, :] + r_dirs[..., None, :] * t_samples[..., :, None]
 
-    # TODO: add fine model
-    model_fine = None
+    #_d_vec = d_vec[..., None, :].expand(coords.shape)
 
     # Returned from model; tensor of size n_rays x n_samples x 4
-    rgba_f = torch.rand(coords.shape)
+    rgba_f = fine_model(coords, d_vec)
 
     # tensor of size n_rays x 3
     rgb_f, weights_f = process_volume_info(rgba_f, t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
     return rgb, rgb_f
 
 
-def render_full(render_poses, cam_params, save_dir, fine_model, bounds, args):
+def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bounds, args):
     height, width, f = cam_params
 
     args = copy.deepcopy(args)
@@ -266,6 +264,7 @@ def render_full(render_poses, cam_params, save_dir, fine_model, bounds, args):
         batch_size = args.n_rays
         n_batches = int(np.ceil((height * width) / batch_size))
 
+        # batching so that we don't saturate GPU memory
         _d_seen_indices = [] # TODO: remove after testing
         for j in range(n_batches):
             batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size), height * width)
@@ -279,7 +278,7 @@ def render_full(render_poses, cam_params, save_dir, fine_model, bounds, args):
             r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
             batch_rays = torch.stack([r_origins, r_dirs], 0)
 
-            _, rgb_f = render(cam_params, pose_mat[:3, :4], batch_rays, None, fine_model, bounds, args)
+            _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args)
             pred_ims.append(pred_ims)
 
         if args.debug:
@@ -294,8 +293,9 @@ def render_full(render_poses, cam_params, save_dir, fine_model, bounds, args):
     pred_ims = np.stack(pred_ims, 0)
     return pred_ims
 
+
 def decayed_learning_rate(step, decay_steps, initial_lr, decay_rate=0.1):
-  return initial_lr * decay_rate ^ (step / decay_steps)
+    return initial_lr * decay_rate ^ (step / decay_steps)
 
 
 def main():
@@ -315,26 +315,29 @@ def main():
     height, width, f = cam_params
     height, width = int(height), int(width)
 
-    model = None
-    model_fine = None
-    params = None
+    coarse_model = Model(xyz_L=args.L_pos, angle_L=args.L_ang)
+    fine_model = Model(xyz_L=args.L_pos, angle_L=args.L_ang)
+
+    params = list(coarse_model.parameters()) + list(fine_model.parameters())
     if torch.cuda.is_available():
-        model = model.cuda()
-        model_fine = model_fine.cuda()
+        coarse_model = coarse_model.cuda()
+        fine_model = fine_model.cuda()
         images = torch.Tensor(images).cuda()
         poses = torch.Tensor(poses).cuda()
         render_poses = torch.Tensor(render_poses).cuda()
     elif not args.debug:
         raise ValueError("CUDA is not available")
 
-    #optimizer = torch.optim.Adam(params=params, lr=args.lr, betas=(0.9, 0.999))
-
+    optimizer = torch.optim.Adam(params=params, lr=args.lr, betas=(0.9, 0.999))
     steps = args.iter
     step = 0
 
     # training loop
     for i in range(steps):
         step += 1
+
+        step_time = 0.0
+        step_time = time.time()
 
         # don't collect gradients during preprocessing
         with torch.no_grad():
@@ -366,33 +369,50 @@ def main():
             batch_pixels = im[batch_pixels[:, 0], batch_pixels[:, 1]]
 
         # renders rays into RGB values
-        rgb_c, rgb_f = render([height, width, f], batch_rays, model, model_fine, bounds, args)
+        rgb_c, rgb_f = render(batch_rays, coarse_model, fine_model, bounds, args)
 
-        #optimizer.zero_grad()
+        optimizer.zero_grad()
         loss = torch.mean((rgb_c - batch_pixels) ** 2)
         loss += 0.0 if rgb_f is None else torch.mean((rgb_f - batch_pixels) ** 2)
 
-        #optimizer.step()
+        optimizer.step()
 
-
+        step_time = time.time() - step_time
         DECAY_RATE = 0.1
         DECAY_SIZE = 1000
 
         # update learning rate: https://tinyurl.com/48makybr using exponential decay
-        #lr = decayed_learning_rate(step, DECAY_SIZE * args.lr_decay, args.lr)
-        #for g in optimizer.param_groups:
-        #    g['lr'] = lr
+        lr = decayed_learning_rate(step, DECAY_SIZE * args.lr_decay, args.lr, decay_rate=DECAY_RATE)
+        for g in optimizer.param_groups:
+            g['lr'] = lr
 
         with torch.no_grad():
+            if step % args.update_freq == 0:
+                print('Loss: ' + str(loss))
+                print('Step time: ' + str(step_time))
+
+                t = torch.cuda.get_device_properties(0).total_memory
+                r = torch.cuda.memory_reserved(0)
+                a = torch.cuda.memory_allocated(0)
+                f = r - a  # free inside reserved
+
+                print('Total GPU Memory: ' + str(t))
+                print('Reserved GPU Memory: ' + str(r))
+                print('Free GPU Memory: ' + str(f))
+
             if step % args.video_freq == 0:
-                pred_frames = render_full(render_poses, [height, width, f])
+                pred_frames = render_full(render_poses, [height, width, f], args.save_dir, coarse_model, fine_model,
+                                          bounds, args)
+                imageio.mimwrite(os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)),
+                                 (255 * np.clip(pred_frames[-1], 0, 1)).astype(np.uint8), fps=30, quality=8)
+                print('Writing video at', args.os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)))
 
             if step % args.save_freq == 0:
                 path = os.path.join(args.base_dir, args.name, '{:d}.pt'.format(i))
                 torch.save({
                     'iter': step,
-                    'model_coarse_dict': model.state_dict(),
-                    'model_fine_dict': model_fine.state_dict(),
+                    'model_coarse_dict': coarse_model.state_dict(),
+                    'model_fine_dict': fine_model.state_dict(),
                     'optimizer_dict': optimizer.state_dict(),
                 }, path)
                 print('Saved checkpoints at', path)

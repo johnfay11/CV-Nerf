@@ -24,91 +24,82 @@ view dependence (only x as input) has difficulty representing specularities.
 
 
 class Model(nn.Module):
-    def __init__(self):
+    def __init__(self, xyz_L=10, angle_L=4):
         super(Model, self).__init__()
+        self.xyz_L = xyz_L
+        self.angle_L = angle_L
 
-        self.xyz_L = 10
-        self.angle_L = 4
+        self.l1 = nn.Linear(Model._encoding_dim(3, self.xyz_L), 256)
+        self.l2 = nn.Linear(256, 256)
+        self.l3 = nn.Linear(256, 256)
+        self.l4 = nn.Linear(256, 256)
+        self.l5 = nn.Linear(256, 256)
 
-        l1 = nn.Linear(60, 256)
-        l2 = nn.Linear(256, 256)
-        l3 = nn.Linear(256, 256)
-        l4 = nn.Linear(256, 256)
-        l5 = nn.Linear(256+60, 256)
+        self.l6 = nn.Linear(256 + Model._encoding_dim(3, self.xyz_L), 256)
+        self.l7 = nn.Linear(256, 256)
+        self.l8 = nn.Linear(256, 256)
 
-        l6 = nn.Linear(256, 256)
-        l7 = nn.Linear(256, 256)
-        l8 = nn.Linear(256,257)
+        self.l9 = nn.Linear(256, 257)
 
-        l9 = nn.Linear(256+24,128)
-        l10 = nn.Linear(128,3)
+        self.l10 = nn.Linear(256 + Model._encoding_dim(3, self.angle_L), 128)
+        self.l11 = nn.Linear(128, 3)
 
-    def pos_encoding(self,pos,L):
+    @staticmethod
+    def _encoding_dim(num_comp, L):
+        return 2 * num_comp * L
+
+    @staticmethod
+    def _pos_encoding(pos, out, L):
         """
         :param pos: pos positions, or angle unit vector (assumed dtype is python list)
         :param L: defines number of terms in encoding (2*L terms)
         :return: FloatTensor input for network
         """
-        out = []
-        for i in range(len(pos)):
+        for i in range(pos.shape[0]):
             for j in range(L):
-                out.append(sin((2**j)*pi*pos[i]))
-                out.append(cos((2**j)*pi*pos[i]))
-
-        out = torch.FloatTensor(out)
-
+                out[(i * L) + j] = (sin((2 ** j) * pi * pos[i]))
+                out[(i * L) + j + 1] = (cos((2 ** j) * pi * pos[i]))
         return out
 
-    def call(self, xyz,view_angle):
+    def forward(self, xyz, view_angle):
         """
         :param xyz: (x,y,z) position coordinate
         :param view_angle: view angle unit vector
             (both params assumed to be python lists)
         """
-        input = self.pos_encoding(xyz,self.xyz_L)
-        out = func.relu(self.l1(input))
+
+        X = torch.zeros(xyz.shape[:-1] + Model._encoding_dim(3, self.xyz_L))
+        X_ang = torch.zeros(xyz.shape[:-1] + Model._encoding_dim(3, self.xyz_L))
+
+        for ray in range(X.shape[0]):
+            for pt in range(X.shape[1]):
+                X[ray, pt] = Model._pos_encoding(xyz[ray, pt], X[ray, pt], self.xyz_L)
+
+        out = func.relu(self.l1(X))
         out = func.relu(self.l2(out))
         out = func.relu(self.l3(out))
         out = func.relu(self.l4(out))
-        out = torch.cat((input,out))
         out = func.relu(self.l5(out))
+
+        # skip connection that concatenates X to the fifth layer’s activation
+        out = torch.cat((X, out))
+
         out = func.relu(self.l6(out))
         out = func.relu(self.l7(out))
         out = func.relu(self.l8(out))
 
+        out = self.l9(out)
         density = out[0]
         feat_vec = out[1:]
 
         out = feat_vec
 
-        angle_encoding = self.pos_encoding(view_angle,self.angle_L)
+        # this is a subtle optimization
+        for ray in range(X.shape[0]):
+            X_ang[ray, :] = Model._pos_encoding(view_angle, X[ray, 0], self.angle_L)
 
-        out = torch.cat((out,angle_encoding))
+        out = torch.cat([out, X_ang])
         out = func.relu(self.l9(out))
         out = self.l10(out)
-
-        return out
-
-
-
-def loss_func(gt_rgb,gt_density,rgb,density):
-    pass
-
-
-def train():
-    pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-if __name__ == '__main__':
-    print('test')
+        rgb = func.sigmoid(out)
+        return torch.cat([rgb, density], -1)
