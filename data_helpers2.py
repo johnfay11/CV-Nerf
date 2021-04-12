@@ -135,7 +135,7 @@ def render_path_spiral(c2w,up,rads,focal,zdelta,zrate,rots,N):
     hwf =  c2w[:,4:5] #TODO: check that this is getting the right thing
 
     for theta in np.linspace(0.,2.*np.pi *rots,N+1)[:-1]:
-        c = np.dot(c2w[:3,:4], np.array([np.cos(theta),-np.sin(theta),-np.sin(theta),-np.sin(theta*zrate),1.]) * r)
+        c = np.dot(c2w[:3,:4], np.array([np.cos(theta),-np.sin(theta),-np.sin(theta*zrate),1.]) * r)
         z = c - np.dot(c2w[:3,:4],np.array([0,0,-focal,1.]))
         z = z / np.linalg.norm(z)
         m = view_matrix(z,up,c)
