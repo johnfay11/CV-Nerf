@@ -1,5 +1,7 @@
 import configargparse
 import torch
+import torch.nn.functional as func
+
 import numpy as np
 import copy
 
@@ -71,10 +73,16 @@ def compute_rays(h, w, f, pose):
     # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays
 
     # spans from 0 to h - 1, row-wise
-    y_grid = torch.arange(0, h, dtype=torch.float32).cuda()
+    if torch.cuda.is_available():
+        y_grid = torch.arange(0, h, dtype=torch.float32).cuda()
+    else:
+        y_grid = torch.arange(0, h, dtype=torch.float32)
 
     # spans from 0 to w - 1, column-wise
-    x_grid = torch.arange(0, w, dtype=torch.float32).cuda()
+    if torch.cuda.is_available():
+        x_grid = torch.arange(0, w, dtype=torch.float32).cuda()
+    else:
+        x_grid = torch.arange(0, w, dtype=torch.float32)
 
     # discretize image into hxw grid; note that meshgrid is implemented poorly, so we have to use numpy
     x, y = torch.meshgrid(x_grid, y_grid)
@@ -95,12 +103,12 @@ def compute_rays(h, w, f, pose):
     dirs = torch.sum(proj, -1)
 
     # last column of projection matrix contains origin of all rays
-    origins = pose[:3, -1].expand(dirs.shape)
+    origins = torch.Tensor(pose)[:3, -1].expand(dirs.shape)
     return origins, dirs
 
 
 def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
-    INF_DIST = 110
+    INF_DIST = 1e10
     EPS = 1e-10  # for numerical stability (see: https://effectivemachinelearning.com/PyTorch/7._Numerical_stability_in_PyTorch)
 
     # generate noise for volume channel (see p. 19) for more information
@@ -108,21 +116,32 @@ def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
     if noise > 0.0:
         _noise = torch.randn(raw_rgba[..., 3].shape) * noise
 
-    _noise = _noise.cuda()
+    if torch.cuda.is_available():
+        _noise = _noise.cuda()
+    else:
+        _noise = _noise.cpu()
 
     # compute distances between samples (denotes as deltas in equation (3))
     deltas = t_samples[..., 1:] - t_samples[..., :-1]
-    last_delta = torch.Tensor([INF_DIST]).expand(deltas[..., :1].shape).cuda()
+
+    if torch.cuda.is_available():
+        last_delta = torch.Tensor([INF_DIST]).expand(deltas[..., :1].shape).cuda()
+    else:
+        last_delta = torch.Tensor([INF_DIST]).expand(deltas[..., :1].shape).cpu()
+
     deltas = torch.cat([deltas, last_delta], -1) * torch.norm(r_dirs[..., None, :], dim=-1)
 
     # alpha compositing; ensure that relu has already been applied!!
-    alpha = 1.0 - torch.exp(-(raw_rgba[..., 3] + _noise) * deltas)
+    alpha = 1.0 - torch.exp(-func.relu((raw_rgba[..., 3] + _noise) * deltas))
 
     # apply sigmoid activation to colors (see architecture diagram); ensure that sigmoid has already been applied!!
     colors = raw_rgba[..., :3]
 
     # compute T_i(s) using alpha values (see eq. (3))
-    T_weights = torch.cat([torch.ones((alpha.shape[0], 1)).cuda(), 1. - alpha + EPS], -1)
+    if torch.cuda.is_available():
+        T_weights = torch.cat([torch.ones((alpha.shape[0], 1)).cuda(), 1. - alpha + EPS], -1)
+    else:
+        T_weights = torch.cat([torch.ones((alpha.shape[0], 1)).cpu(), 1. - alpha + EPS], -1)
 
     # have to use a roundabout way of computing cumprod because of the way it's not exclusive in pytorch
     T_weights = alpha * torch.cumprod(T_weights, -1)[:, :-1]
@@ -154,11 +173,17 @@ def inv_transform_sampling(pts, weights, n):
 
     # construct cdf (denote F) from pdf
     cdf = torch.cumsum(pdf, -1)
-    cdf = [torch.zeros_like(cdf[..., :1]).cuda(), cdf]
+    if torch.cuda.is_available():
+        cdf = [torch.zeros_like(cdf[..., :1]).cuda(), cdf]
+    else:
+        cdf = [torch.zeros_like(cdf[..., :1]).cpu(), cdf]
     cdf = torch.cat(cdf, -1)
 
     # uniformly sample points
-    unif_samp = torch.rand(list(cdf.shape[:-1]) + [n]).cuda()
+    if torch.cuda.is_available():
+        unif_samp = torch.rand(list(cdf.shape[:-1]) + [n]).cuda()
+    else:
+        unif_samp = torch.rand(list(cdf.shape[:-1]) + [n]).cpu()
 
     """
     Invert the CDF and compute F^{-1}(U). This reduces to a searching for domain values of F that contain the 
@@ -202,12 +227,19 @@ def render(rays, coarse_model, fine_model, bounds, args):
         d_vec = torch.reshape(d_vec, [-1, 3]).float()
 
         # partition [0, 1] using n points and rescale into [t_n, t_f]
-        t_samples = torch.linspace(0., 1., steps=args.n_samples).cuda()
+        if torch.cuda.is_available():
+            t_samples = torch.linspace(0., 1., steps=args.n_samples).cuda()
+        else:
+            t_samples = torch.linspace(0., 1., steps=args.n_samples).cpu()
+
         t_samples = bounds[0] * (1. - t_samples) + bounds[1] * t_samples
         t_samples = t_samples.expand([args.n_rays, args.n_samples])
 
         # get n_rays * n_samples random samples in [0, 1]
-        t_r = torch.rand(t_samples.shape).cuda()
+        if torch.cuda.is_available():
+            t_r = torch.rand(t_samples.shape).cuda()
+        else:
+            t_r = torch.rand(t_samples.shape).cpu()
 
         # rescale by computing the middle of each interval
         midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
@@ -337,8 +369,8 @@ def main():
         fine_model = fine_model.cuda()
         images = torch.Tensor(images).cuda()
         poses = torch.Tensor(poses).cuda()
-    elif not args.debug:
-        raise ValueError("CUDA is not available")
+    #elif not args.debug:
+    #    raise ValueError("CUDA is not available")
 
     # training loop
     for i in range(steps):
@@ -347,14 +379,14 @@ def main():
         print('Step: ' + str(step))
 
         # source: https://stackoverflow.com/questions/58216000/get-total-amount-of-free-gpu-memory-and-available-using-pytorch
-        t = torch.cuda.get_device_properties(0).total_memory
-        r = torch.cuda.memory_reserved(0)
-        a = torch.cuda.memory_allocated(0)
-        f = r - a  # free inside reserved
+        #t = torch.cuda.get_device_properties(0).total_memory
+        #r = torch.cuda.memory_reserved(0)
+        #a = torch.cuda.memory_allocated(0)
+        #f = r - a  # free inside reserved
 
-        print('Total GPU Memory: ' + str(t))
-        print('Reserved GPU Memory: ' + str(r))
-        print('Free GPU Memory: ' + str(f))
+        #print('Total GPU Memory: ' + str(t))
+        #print('Reserved GPU Memory: ' + str(r))
+        #print('Free GPU Memory: ' + str(f))
 
         step_time = 0.0
         step_time = time.time()
@@ -363,8 +395,6 @@ def main():
         # select random image
         im_idx = np.random.choice(train_idx)
         im = images[im_idx]
-
-        print(im.shape)
 
         # extract projection matrix:
         # (https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera)
@@ -392,8 +422,8 @@ def main():
         if torch.cuda.is_available():
             batch_rays = batch_rays.cuda()
             batch_pixels = batch_pixels.cuda()
-        elif not args.debug:
-            raise ValueError("CUDA is not available")
+        #elif not args.debug:
+        #    raise ValueError("CUDA is not available")
 
         # renders rays into RGB values
         rgb_c, rgb_f = render(batch_rays, coarse_model, fine_model, bounds, args)

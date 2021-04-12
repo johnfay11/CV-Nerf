@@ -29,28 +29,30 @@ class Model(nn.Module):
         self.angle_L = angle_L
 
         self.l1 = nn.Linear(Model._encoding_dim(3, self.xyz_L), 256)
-        torch.nn.init.xavier_uniform_(self.l1.weight)
+        torch.nn.init.xavier_uniform_(self.l1.weight, gain=nn.init.calculate_gain('relu'))
+
 
         self.l2 = nn.Linear(256, 256)
-        torch.nn.init.xavier_uniform_(self.l2.weight)
+        torch.nn.init.xavier_uniform_(self.l2.weight, gain=nn.init.calculate_gain('relu'))
+
 
         self.l3 = nn.Linear(256, 256)
-        torch.nn.init.xavier_uniform_(self.l3.weight)
+        torch.nn.init.xavier_uniform_(self.l3.weight, gain=nn.init.calculate_gain('relu'))
 
         self.l4 = nn.Linear(256, 256)
-        torch.nn.init.xavier_uniform_(self.l4.weight)
+        torch.nn.init.xavier_uniform_(self.l4.weight, gain=nn.init.calculate_gain('relu'))
 
         self.l5 = nn.Linear(256, 256)
-        torch.nn.init.xavier_uniform_(self.l5.weight)
+        torch.nn.init.xavier_uniform_(self.l5.weight, gain=nn.init.calculate_gain('relu'))
 
         self.l6 = nn.Linear(256 + Model._encoding_dim(3, self.xyz_L), 256)
-        torch.nn.init.xavier_uniform_(self.l6.weight)
+        torch.nn.init.xavier_uniform_(self.l6.weight, gain=nn.init.calculate_gain('relu'))
 
         self.l7 = nn.Linear(256, 256)
-        torch.nn.init.xavier_uniform_(self.l7.weight)
+        torch.nn.init.xavier_uniform_(self.l7.weight, gain=nn.init.calculate_gain('relu'))
 
         self.l8 = nn.Linear(256, 256)
-        torch.nn.init.xavier_uniform_(self.l8.weight)
+        torch.nn.init.xavier_uniform_(self.l8.weight, gain=nn.init.calculate_gain('relu'))
 
         self.l9 = nn.Linear(256, 256)
         torch.nn.init.xavier_uniform_(self.l9.weight)
@@ -59,10 +61,10 @@ class Model(nn.Module):
         torch.nn.init.xavier_uniform_(self.l_alpha.weight)
 
         self.l10 = nn.Linear(256 + Model._encoding_dim(3, self.angle_L), 128)
-        torch.nn.init.xavier_uniform_(self.l10.weight)
+        torch.nn.init.xavier_uniform_(self.l10.weight, gain=nn.init.calculate_gain('relu'))
 
         self.l11 = nn.Linear(128, 3)
-        torch.nn.init.xavier_uniform_(self.l11.weight)
+        torch.nn.init.xavier_uniform_(self.l11.weight, gain=nn.init.calculate_gain('relu'))
 
         N_1 = 10
         N_2 = 4
