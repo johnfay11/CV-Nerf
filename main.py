@@ -75,6 +75,7 @@ def compute_rays(h, w, f, pose):
     # spans from 0 to h - 1, row-wise
     if torch.cuda.is_available():
         y_grid = torch.arange(0, h, dtype=torch.float32).cuda()
+        pose = pose.cuda()
     else:
         y_grid = torch.arange(0, h, dtype=torch.float32)
 
