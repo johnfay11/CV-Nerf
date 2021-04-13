@@ -69,6 +69,10 @@ def load_dataset(args):
 
 
 def compute_rays(h, w, f, pose):
+    h = torch.tensor(h)
+    w = torch.tensor(w)
+    f = torch.tensor(f)
+    pose = torch.tensor(pose)
     h = h.cuda()
     w = w.cuda()
     f = f.cuda()
