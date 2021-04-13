@@ -69,14 +69,16 @@ def load_dataset(args):
 
 
 def compute_rays(h, w, f, pose):
+    h = h.cuda()
+    w = w.cuda()
+    f = f.cuda()
+    pose = pose.cuda()
     # see: https://graphics.cs.wisc.edu/WP/cs559-fall2016/files/2016/12/shirley_chapter_4.pdf and
     # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays
 
     # spans from 0 to h - 1, row-wise
     if torch.cuda.is_available():
         y_grid = torch.arange(0, h, dtype=torch.float32).cuda()
-        print('working')
-        pose = pose.cuda()
     else:
         y_grid = torch.arange(0, h, dtype=torch.float32)
 
@@ -103,10 +105,9 @@ def compute_rays(h, w, f, pose):
     # now, we project each ray direction into world space using the camera pose
     proj = dirs[..., np.newaxis, :] * pose[:3, :3]
     dirs = torch.sum(proj, -1)
-    dirs = dirs.cpu()
 
     # last column of projection matrix contains origin of all rays
-    origins = (torch.Tensor(pose)[:3, -1].expand(dirs.shape)).cpu()
+    origins = torch.Tensor(pose)[:3, -1].expand(dirs.shape)
     return origins, dirs
 
 
