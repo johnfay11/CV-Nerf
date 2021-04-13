@@ -106,7 +106,7 @@ def compute_rays(h, w, f, pose):
     dirs = dirs.cpu()
 
     # last column of projection matrix contains origin of all rays
-    origins = (torch.Tensor(pose)[:3, -1].expand(dirs.shape)).cuda()
+    origins = (torch.Tensor(pose)[:3, -1].expand(dirs.shape)).cpu()
     return origins, dirs
 
 
