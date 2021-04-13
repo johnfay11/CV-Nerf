@@ -102,6 +102,7 @@ def compute_rays(h, w, f, pose):
     # now, we project each ray direction into world space using the camera pose
     proj = dirs[..., np.newaxis, :] * pose[:3, :3]
     dirs = torch.sum(proj, -1)
+    dirs = dirs.cuda()
 
     # last column of projection matrix contains origin of all rays
     origins = torch.Tensor(pose)[:3, -1].expand(dirs.shape).cuda()
