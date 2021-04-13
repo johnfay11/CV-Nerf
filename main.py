@@ -265,7 +265,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
     height, width, f = cam_params
 
     args = copy.deepcopy(args)
-    args = dict(args)
+    args = dict(iter(args))
     args['noise'] = 0.0
 
     pred_ims = []
