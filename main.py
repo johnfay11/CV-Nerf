@@ -49,7 +49,7 @@ def parse_settings():
     parser.add_argument('--noise', type=float, default=1.0)
 
     parser.add_argument('--save_freq', type=int, default=2500)
-    parser.add_argument('--video_freq', type=int, default=750)
+    parser.add_argument('--video_freq', type=int, default=1)
     parser.add_argument('--update_freq', type=int, default=50)
     return parser.parse_args()
 
@@ -265,6 +265,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
     height, width, f = cam_params
 
     args = copy.deepcopy(args)
+    args = dict(args)
     args['noise'] = 0.0
 
     pred_ims = []
