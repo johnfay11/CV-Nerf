@@ -49,7 +49,7 @@ def parse_settings():
     parser.add_argument('--noise', type=float, default=1.0)
 
     parser.add_argument('--save_freq', type=int, default=2500)
-    parser.add_argument('--video_freq', type=int, default=2500)
+    parser.add_argument('--video_freq', type=int, default=750)
     parser.add_argument('--update_freq', type=int, default=50)
     return parser.parse_args()
 
@@ -68,6 +68,14 @@ def load_dataset(args):
 
 
 def compute_rays(h, w, f, pose):
+    h = torch.tensor(h)
+    w = torch.tensor(w)
+    f = torch.tensor(f)
+    pose = torch.tensor(pose)
+    h = h.cuda()
+    w = w.cuda()
+    f = f.cuda()
+    pose = pose.cuda()
     # see: https://graphics.cs.wisc.edu/WP/cs559-fall2016/files/2016/12/shirley_chapter_4.pdf and
     # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays
 
