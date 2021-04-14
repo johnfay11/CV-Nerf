@@ -228,6 +228,9 @@ def render(rays, coarse_model, fine_model, bounds, args):
 
         # compute the (x, y, z) coords of each timestep using ray origins and directions
         # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
+        print("HERE!:")
+        print(r_dirs.shape)
+        print(t_samples.shape)
         coords = r_dirs[..., None, :] * t_samples[..., :, None]
         coords = r_origins[..., None, :] + coords
 
