@@ -280,6 +280,10 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
         print('Rendering pose %d out of %d poses' % (i, len(render_poses)))
         r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]).cuda())
 
+        if args.ndc:
+            r_origins, r_dirs = get_ndc(height,width,f,1.,r_origins,r_dirs)
+
+
         h_grid = torch.linspace(0, height - 1, height).cuda()
         w_grid = torch.linspace(0, width - 1, width).cuda()
         grid = torch.meshgrid(h_grid, w_grid)
@@ -349,14 +353,14 @@ def main():
         val_idx = test_idx
         train_idx = []
         for i in np.arange(int(images.shape[0])):
-            if i not in test_idx and i not in val_inx:
+            if i not in test_idx and i not in val_idx:
                 train_idx.append(i)
         train_idx = np.array(train_idx)
 
         if not args.ndc:
             b = np.array(bounds).flatten()
             near = np.min(b) * .9
-            far = np.ax(b) * 1.
+            far = np.max(b) * 1.
         else:
             near = 0.
             far = 1.
@@ -412,6 +416,9 @@ def main():
 
         # both origins and orientations are needed to determine a ray
         r_origins, r_dirs = compute_rays(height, width, f, pose)
+        
+        if args.ndc:
+            r_origins, r_dirs = get_ndc(height,width,f,1.,r_origins,r_dirs)
 
         # select a random subset of rays from a H x W grid
         h_grid = torch.linspace(0, height - 1, height)
