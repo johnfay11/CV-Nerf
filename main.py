@@ -9,7 +9,7 @@ import os
 import imageio
 import time
 
-from data_helpers import load_blender_data
+from data_helpers import load_blender_data, load_llff_data, get_ndc
 from model import Model
 
 
@@ -26,6 +26,7 @@ def parse_settings():
 
     parser.add_argument("--dtype", type=str, default='llff',
                         help='llff or blender')
+    parser.add_argument("--ndc",type=bool,default=True)
 
     parser.add_argument('--n_rays', type=int, default=4096)
     parser.add_argument('--n_samples', type=int, default=64)
@@ -67,7 +68,8 @@ def load_dataset(args):
     if args.dtype == 'blender':
         return load_blender_data(args.data_dir, half_res=args.half_res, testskip=args.testskip, bkg=args.white_bkg)
     else:
-        raise NotImplementedError("please implement me! (LLFF)")
+        return load_llff_data(args.data_dir)
+        #raise NotImplementedError("please implement me! (LLFF)")
 
 
 def compute_rays(h, w, f, pose):
@@ -339,7 +341,30 @@ def main():
     bounds: list of the form [near bound, far bound]
     '''
     images, poses, render_poses, cam_params, i_split, bounds = load_dataset(args)
-    train_idx, val_idx, test_idx = i_split
+    
+    if args.dtype == 'llff':
+        test_idx = [i_split]
+        test_idx = np.arange(images.shape[0])[::8]
+
+        val_idx = test_idx
+        train_idx = []
+        for i in np.arange(int(images.shape[0])):
+            if i not in test_idx and i not in val_inx:
+                train_idx.append(i)
+        train_idx = np.array(train_idx)
+
+        if not args.ndc:
+            b = np.array(bounds).flatten()
+            near = np.min(b) * .9
+            far = np.ax(b) * 1.
+        else:
+            near = 0.
+            far = 1.
+
+        bounds = [near, far]
+
+    else:
+        train_idx, val_idx, test_idx = i_split
 
     # unpack camera intrinsics
     height, width, f = cam_params
