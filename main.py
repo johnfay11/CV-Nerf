@@ -454,7 +454,7 @@ def main():
                                           bounds, args)
                 imageio.mimwrite(os.path.join(args.save_dir, args.name, 'test_vid_{:d}.mp4'.format(step)),
                                  (255 * np.clip(pred_frames[-1], 0, 1)).astype(np.uint8), fps=30, quality=8)
-                print('Writing video at', args.os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)))
+                print('Writing video at', os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)))
 
             if step % args.save_freq == 0:
                 Path('./results/lego/''{:d}.pt'.format(i)).touch()
