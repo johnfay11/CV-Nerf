@@ -204,13 +204,12 @@ def render(rays, coarse_model, fine_model, bounds, args):
     inference = coarse_model is None
 
     with torch.no_grad():
+        print("HERE")
+        print(rays.shape)
         r_origins, r_dirs = rays
 
         # represents theta and phi, as specified in the paper
-        print(r_dirs.shape)
         d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
-        print("REACHED")
-        print(d_vec.shape)
         d_vec = torch.reshape(d_vec, (-1, 3)).float()
 
         # partition [0, 1] using n points and rescale into [t_n, t_f]
