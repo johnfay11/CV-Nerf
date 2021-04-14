@@ -287,6 +287,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
         for j in range(n_batches):
             ## TODO: Step param could be wrong? -John
             batch_indices = np.arange((j * batch_size), min(((j + 1) * batch_size), height * width))
+            batch_indices = np.expand_dims(batch_indices, axis=1)
             batch_indices = np.concatenate((batch_indices, batch_indices, batch_indices), axis=1)
             print(batch_indices.shape)
 
