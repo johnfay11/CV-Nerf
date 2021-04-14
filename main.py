@@ -68,14 +68,14 @@ def load_dataset(args):
 
 
 def compute_rays(h, w, f, pose):
-#     h = torch.tensor(h)
-#     w = torch.tensor(w)
-#     f = torch.tensor(f)
-#     pose = torch.tensor(pose)
-#     h = h.cuda()
-#     w = w.cuda()
-#     f = f.cuda()
-#     pose = pose.cuda()
+    h = torch.tensor(h)
+    w = torch.tensor(w)
+    f = torch.tensor(f)
+    pose = torch.tensor(pose)
+    h = h.cuda()
+    w = w.cuda()
+    f = f.cuda()
+    pose = pose.cuda()
     # see: https://graphics.cs.wisc.edu/WP/cs559-fall2016/files/2016/12/shirley_chapter_4.pdf and
     # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays
 
@@ -262,6 +262,9 @@ def render(rays, coarse_model, fine_model, bounds, args):
 
 
 def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bounds, args):
+    print(render_poses)
+    render_poses = torch.tensor(render_poses)
+    render_poses = render_poses.cuda()
     height, width, f = cam_params
 
     args = copy.deepcopy(args)
