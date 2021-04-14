@@ -20,6 +20,8 @@ def parse_settings():
     parser.add_argument('--name', type=str)
     parser.add_argument('--save_dir', type=str, default='./logs')
     parser.add_argument('--data_dir', type=str)
+    
+    parser.add_argument('--base_dir', type=str, default='./results')
 
     parser.add_argument("--dtype", type=str, default='llff',
                         help='llff or blender')
