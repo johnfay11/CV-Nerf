@@ -117,7 +117,7 @@ def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
     if noise > 0.0:
         _noise = torch.randn(raw_rgba[..., 3].shape) * noise
 
-    _noise = _noise.cuda()
+    _noise = torch.tensor(_noise).cuda()
 
     # compute distances between samples (denotes as deltas in equation (3))
     deltas = t_samples[..., 1:] - t_samples[..., :-1]
