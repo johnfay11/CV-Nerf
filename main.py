@@ -269,7 +269,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
 
     pred_ims = []
     for i, pose_mat in enumerate(render_poses):
-        r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat))
+        r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]))
 
         h_grid = torch.linspace(0, height - 1, height).cuda()
         w_grid = torch.linspace(0, width - 1, width).cuda()
@@ -297,9 +297,9 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
 
             batch_pixels = grid[batch_indices].long()
 
-            r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
-            r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
-            batch_rays = torch.stack([r_origins, r_dirs], 0)
+            _r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
+            _r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
+            batch_rays = torch.stack([_r_origins, _r_dirs], 0)
             _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args)
             pred_ims.append(pred_ims)
 
