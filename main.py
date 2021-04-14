@@ -290,7 +290,10 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
 
         # batching so that we don't saturate GPU memory
         _d_seen_indices = []  # TODO: remove after testing
+        batch = []
         for j in range(n_batches):
+          #print('batch %d of %d' % (j, n_batches))
+
           batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size, grid.shape[0]))
 
           #if args.debug:
@@ -303,14 +306,21 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
           batch_rays = torch.stack([_r_origins, _r_dirs], 0)
 
           _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args, batch_indices.shape[0])
-          pred_ims.append(rgb_f)
+          #print(batch_rays.shape)
+          #print(rgb_f.shape)
+          batch.append(rgb_f.cpu().numpy())
+          #pred_ims.append(rgb_f.cpu().numpy())
 
+        #print(batch)
+        im = np.concatenate(batch, 0).reshape((height, width, 3))
+        #print(im.shape)
+        pred_ims.append(im)
         # convert to 8bytes
-        #im_8 = (255 * np.clip(pred_ims[-1], 0, 1)).astype(np.uint8)
-        #filename = os.path.join(save_dir, '{:04d}.png'.format(i))
-        #imageio.imwrite(filename, im_8)
+        im_8 = (255 * np.clip(im, 0, 1)).astype(np.uint8)
+        filename = os.path.join(save_dir, '{:04d}.png'.format(i))
+        imageio.imwrite(filename, im_8)
 
-    pred_ims = [x.cpu().numpy() for x in pred_ims]
+    pred_ims = [x for x in pred_ims]
     pred_ims = np.stack(pred_ims, 0)
     return pred_ims
 
@@ -387,10 +397,10 @@ def main():
 
         # (H x W, 2) tensor containing all possible pixels
         grid = torch.reshape(grid, [-1, 2])
-        print("B!")
-        print(grid.shape)
+        #print("B!")
+        #print(grid.shape)
         batch_indices = np.random.choice(grid.shape[0], size=[args.n_rays], replace=False)
-        print(batch_indices.shape)
+        #print(batch_indices.shape)
         batch_pixels = grid[batch_indices].long()
 
         r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
@@ -409,9 +419,9 @@ def main():
 
         optimizer.zero_grad()
 
-        print(rgb_c.shape)
-        print(batch_pixels.shape)
-        print(rgb_c)
+        #print(rgb_c.shape)
+        #print(batch_pixels.shape)
+        #print(rgb_c)
         loss = torch.mean((rgb_c - batch_pixels) ** 2).item()
         loss += 0.0 if rgb_f is None else torch.mean((rgb_f - batch_pixels) ** 2).item()
 
