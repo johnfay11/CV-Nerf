@@ -262,9 +262,7 @@ def render(rays, coarse_model, fine_model, bounds, args):
 
 
 def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bounds, args):
-    print(render_poses)
-    render_poses = torch.tensor(render_poses)
-    render_poses = render_poses.cuda()
+    print(cam_params)
     height, width, f = cam_params
 
     args = copy.deepcopy(args)
@@ -272,7 +270,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
 
     pred_ims = []
     for i, pose_mat in enumerate(render_poses):
-        r_origins, r_dirs = compute_rays(height, width, f, torch.Tensor(pose_mat).cuda())
+        r_origins, r_dirs = compute_rays(height, width, f, torch.Tensor(pose_mat))
 
         h_grid = torch.linspace(0, height - 1, height).cuda()
         w_grid = torch.linspace(0, width - 1, width).cuda()
