@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as func
 import numpy as np
 import copy
+from pathlib import Path
 
 import os
 import imageio
@@ -453,6 +454,7 @@ def main():
                 print('Writing video at', args.os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)))
 
             if step % args.save_freq == 0:
+                Path('./results/lego/''{:d}.pt'.format(i)).touch()
                 path = os.path.join(args.base_dir, args.name, '{:d}.pt'.format(i))
                 torch.save({
                     'iter': step,
