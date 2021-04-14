@@ -207,6 +207,7 @@ def render(rays, coarse_model, fine_model, bounds, args):
         r_origins, r_dirs = rays
 
         # represents theta and phi, as specified in the paper
+        print(r_dirs.shape)
         d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
         print("REACHED")
         print(d_vec.shape)
