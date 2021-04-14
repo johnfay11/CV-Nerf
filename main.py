@@ -51,9 +51,9 @@ def parse_settings():
     parser.add_argument('--white_bkg', type=bool, default=False)
     parser.add_argument('--noise', type=float, default=1.0)
 
-    parser.add_argument('--save_freq', type=int, default=1) #2500
-    parser.add_argument('--video_freq', type=int, default=2) #5000
-    parser.add_argument('--update_freq', type=int, default=1) #50
+    parser.add_argument('--save_freq', type=int, default=2500) #2500
+    parser.add_argument('--video_freq', type=int, default=5000) #5000
+    parser.add_argument('--update_freq', type=int, default=50) #50
     return parser.parse_args()
 
 
