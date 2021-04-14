@@ -228,9 +228,6 @@ def render(rays, coarse_model, fine_model, bounds, args):
 
         # compute the (x, y, z) coords of each timestep using ray origins and directions
         # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
-        print("HERE!:")
-        print(r_dirs.shape)
-        print(t_samples.shape)
         coords = r_dirs[..., None, :] * t_samples[..., :, None]
         coords = r_origins[..., None, :] + coords
 
@@ -302,7 +299,8 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
             r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
             r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
             batch_rays = torch.stack([r_origins, r_dirs], 0)
-
+            print("Here!!:")
+            print(batch_rays.shape)
             _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args)
             pred_ims.append(pred_ims)
 
