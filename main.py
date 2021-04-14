@@ -274,7 +274,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
     args.noise = 0.0
 
     pred_ims = []
-    for i, pose_mat in enumerate(render_poses):
+    for i, pose_mat in enumerate(render_poses[:2]):
         print('Rendering pose %d out of %d poses' % (i, len(render_poses)))
         r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]).cuda())
 
@@ -320,7 +320,6 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
         filename = os.path.join(save_dir, '{:04d}.png'.format(i))
         imageio.imwrite(filename, im_8)
 
-    pred_ims = [x for x in pred_ims]
     pred_ims = np.stack(pred_ims, 0)
     return pred_ims
 
@@ -380,7 +379,7 @@ def main():
         im_idx = np.random.choice(train_idx)
         im = images[im_idx]
 
-        print(im.shape)
+        #print(im.shape)
 
         # extract projection matrix:
         # (https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera)
@@ -464,7 +463,7 @@ def main():
                 pred_frames = render_full(render_poses, [height, width, f], args.save_dir, coarse_model, fine_model,
                                           bounds, args)
                 imageio.mimwrite(os.path.join(args.save_dir, args.name, 'test_vid_{:d}.mp4'.format(step)),
-                                 (255 * np.clip(pred_frames[-1], 0, 1)).astype(np.uint8), fps=30, quality=8)
+                                 (255 * np.clip(pred_frames, 0, 1)).astype(np.uint8), fps=30, quality=8)
                 print('Writing video at', os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)))
 
             if step % args.save_freq == 0:
