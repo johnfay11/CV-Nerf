@@ -272,6 +272,8 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
     for i, pose_mat in enumerate(render_poses):
         print('reached!')
         r_origins, r_dirs = compute_rays(height, width, f, torch.Tensor(pose_mat))
+        r_origins = r_origins.cpu()
+        r_dirs = r_dirs.cpu()
 
         h_grid = torch.linspace(0, height - 1, height).cuda()
         w_grid = torch.linspace(0, width - 1, width).cuda()
