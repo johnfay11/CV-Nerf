@@ -290,6 +290,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
             batch_indices = np.arange((j * batch_size), min(((j + 1) * batch_size), height * width))
             batch_indices = np.expand_dims(batch_indices, axis=1)
             batch_indices = np.concatenate((batch_indices, batch_indices, batch_indices), axis=1)
+            batch_indices = torch.tensor(batch_indices)
 
             if args.debug:
                 _d_seen_indices.extend(list(batch_indices))
