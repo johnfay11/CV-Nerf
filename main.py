@@ -306,9 +306,9 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
           pred_ims.append(pred_ims)
 
         # convert to 8bytes
-        im_8 = (255 * np.clip(pred_ims[-1], 0, 1)).astype(np.uint8)
-        filename = os.path.join(save_dir, '{:04d}.png'.format(i))
-        imageio.imwrite(filename, im_8)
+        #im_8 = (255 * np.clip(pred_ims[-1], 0, 1)).astype(np.uint8)
+        #filename = os.path.join(save_dir, '{:04d}.png'.format(i))
+        #imageio.imwrite(filename, im_8)
 
     pred_ims = [x.cpu().numpy() for x in pred_ims]
     pred_ims = np.stack(pred_ims, 0)
