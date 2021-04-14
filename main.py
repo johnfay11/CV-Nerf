@@ -50,7 +50,7 @@ def parse_settings():
 
     parser.add_argument('--save_freq', type=int, default=2500)
     parser.add_argument('--video_freq', type=int, default=1)
-    parser.add_argument('--update_freq', type=int, default=50)
+    parser.add_argument('--update_freq', type=int, default=1)
     return parser.parse_args()
 
 
@@ -200,8 +200,11 @@ def inv_transform_sampling(pts, weights, n):
     return (pts[..., 1] - pts[..., 0]) * ((unif_samp - cdf[..., 0]) / scale) + cdf[..., 0]
 
 
-def render(rays, coarse_model, fine_model, bounds, args):
+def render(rays, coarse_model, fine_model, bounds, args, n_rays=None):
     inference = coarse_model is None
+    
+    if n_rays is None:
+      n_rays = args.n_rays 
 
     with torch.no_grad():
         r_origins, r_dirs = rays
@@ -213,7 +216,7 @@ def render(rays, coarse_model, fine_model, bounds, args):
         # partition [0, 1] using n points and rescale into [t_n, t_f]
         t_samples = torch.linspace(0., 1., steps=args.n_samples).cuda()
         t_samples = bounds[0] * (1. - t_samples) + bounds[1] * t_samples
-        t_samples = t_samples.expand([args.n_rays, args.n_samples])
+        t_samples = t_samples.expand([n_rays, args.n_samples])
 
         # get n_rays * n_samples random samples in [0, 1]
         t_r = torch.rand(t_samples.shape).cuda()
@@ -269,7 +272,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
 
     pred_ims = []
     for i, pose_mat in enumerate(render_poses):
-        r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]))
+        r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]).cuda())
 
         h_grid = torch.linspace(0, height - 1, height).cuda()
         w_grid = torch.linspace(0, width - 1, width).cuda()
@@ -277,8 +280,6 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
         grid = torch.stack(grid, -1)
 
         grid = torch.reshape(grid, [-1, 2])
-        print("A!")
-        print(grid.shape)
 
         batch_size = args.n_rays
         n_batches = int(np.ceil((height * width) / batch_size))
@@ -286,25 +287,19 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
         # batching so that we don't saturate GPU memory
         _d_seen_indices = []  # TODO: remove after testing
         for j in range(n_batches):
-            ## TODO: Step param could be wrong? -John
-            batch_indices = np.arange((j * batch_size), min(((j + 1) * batch_size), height * width))
-            batch_indices = np.expand_dims(batch_indices, axis=1)
-            batch_indices = np.concatenate((batch_indices, batch_indices, batch_indices), axis=1)
-            batch_indices = torch.tensor(batch_indices)
+          batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size, grid.shape[0]))
 
-            if args.debug:
-                _d_seen_indices.extend(list(batch_indices))
+          #if args.debug:
+          #    _d_seen_indices.extend(list(batch_indices))
 
-            batch_pixels = grid[batch_indices].long()
+          batch_pixels = grid[batch_indices.reshape((-1,))].long()
 
-            _r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
-            _r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
-            batch_rays = torch.stack([_r_origins, _r_dirs], 0)
-            _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args)
-            pred_ims.append(pred_ims)
+          _r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
+          _r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
+          batch_rays = torch.stack([_r_origins, _r_dirs], 0)
 
-        if args.debug:
-            assert _d_seen_indices == list(range(height * width))
+          _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args, batch_indices.shape[0])
+          pred_ims.append(pred_ims)
 
         # convert to 8bytes
         im_8 = (255 * np.clip(pred_ims[-1], 0, 1)).astype(np.uint8)
@@ -473,4 +468,3 @@ if __name__ == '__main__':
 
 if __name__ == '__main__':
     main()
-
