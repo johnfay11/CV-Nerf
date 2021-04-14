@@ -284,10 +284,9 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
 
         # batching so that we don't saturate GPU memory
         _d_seen_indices = []  # TODO: remove after testing
-        print('ERR HERE:')
-        print(n_batches)
         for j in range(n_batches):
-            batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size), height * width)
+            ## TODO: Step param could be wrong? -John
+            batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size, height * width))
 
             if args.debug:
                 _d_seen_indices.extend(list(batch_indices))
