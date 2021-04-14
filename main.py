@@ -303,7 +303,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
           batch_rays = torch.stack([_r_origins, _r_dirs], 0)
 
           _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args, batch_indices.shape[0])
-          pred_ims.append(pred_ims)
+          pred_ims.append(rgb_f)
 
         # convert to 8bytes
         #im_8 = (255 * np.clip(pred_ims[-1], 0, 1)).astype(np.uint8)
