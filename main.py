@@ -209,7 +209,7 @@ def render(rays, coarse_model, fine_model, bounds, args):
         # represents theta and phi, as specified in the paper
         d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
         print("REACHED")
-        print(d_vec)
+        print(d_vec.shape)
         d_vec = torch.reshape(d_vec, (-1, 3)).float()
 
         # partition [0, 1] using n points and rescale into [t_n, t_f]
