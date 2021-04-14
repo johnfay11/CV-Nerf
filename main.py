@@ -204,8 +204,6 @@ def render(rays, coarse_model, fine_model, bounds, args):
     inference = coarse_model is None
 
     with torch.no_grad():
-        print("HERE")
-        print(rays.shape)
         r_origins, r_dirs = rays
 
         # represents theta and phi, as specified in the paper
@@ -289,6 +287,8 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
         for j in range(n_batches):
             ## TODO: Step param could be wrong? -John
             batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size, height * width))
+            print("LOOK:")
+            print(batch_indices.shape)
 
             if args.debug:
                 _d_seen_indices.extend(list(batch_indices))
@@ -385,6 +385,7 @@ def main():
         # (H x W, 2) tensor containing all possible pixels
         grid = torch.reshape(grid, [-1, 2])
         batch_indices = np.random.choice(grid.shape[0], size=[args.n_rays], replace=False)
+        print(batch_indices.shape)
         batch_pixels = grid[batch_indices].long()
 
         r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
