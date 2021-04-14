@@ -105,8 +105,6 @@ def compute_rays(h, w, f, pose):
 
     # last column of projection matrix contains origin of all rays
     origins = pose[:3, -1].expand(dirs.shape)
-    print(origins)
-    print(dirs)
     return origins, dirs
 
 
@@ -264,6 +262,7 @@ def render(rays, coarse_model, fine_model, bounds, args):
 
 
 def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bounds, args):
+    cam_params = torch.tensor(cam_params).cuda()
     height, width, f = cam_params
 
     args = copy.deepcopy(args)
