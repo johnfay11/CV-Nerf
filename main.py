@@ -109,7 +109,7 @@ def compute_rays(h, w, f, pose):
 
 
 def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
-    INF_DIST = 110
+    INF_DIST = 1e10
     EPS = 1e-10  # for numerical stability (see: https://effectivemachinelearning.com/PyTorch/7._Numerical_stability_in_PyTorch)
 
     # generate noise for volume channel (see p. 19) for more information
