@@ -269,7 +269,6 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
 
     pred_ims = []
     for i, pose_mat in enumerate(render_poses):
-        print(pose_mat)
         r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat))
 
         h_grid = torch.linspace(0, height - 1, height).cuda()
@@ -278,6 +277,8 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
         grid = torch.stack(grid, -1)
 
         grid = torch.reshape(grid, [-1, 2])
+        print("A!")
+        print(grid.shape)
 
         batch_size = args.n_rays
         n_batches = int(np.ceil((height * width) / batch_size))
@@ -289,7 +290,6 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
             batch_indices = np.arange((j * batch_size), min(((j + 1) * batch_size), height * width))
             batch_indices = np.expand_dims(batch_indices, axis=1)
             batch_indices = np.concatenate((batch_indices, batch_indices, batch_indices), axis=1)
-            print(batch_indices.shape)
 
             if args.debug:
                 _d_seen_indices.extend(list(batch_indices))
@@ -299,8 +299,6 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
             r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
             r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
             batch_rays = torch.stack([r_origins, r_dirs], 0)
-            print("Here!!:")
-            print(batch_rays.shape)
             _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args)
             pred_ims.append(pred_ims)
 
@@ -386,6 +384,8 @@ def main():
 
         # (H x W, 2) tensor containing all possible pixels
         grid = torch.reshape(grid, [-1, 2])
+        print("B!")
+        print(grid.shape)
         batch_indices = np.random.choice(grid.shape[0], size=[args.n_rays], replace=False)
         print(batch_indices.shape)
         batch_pixels = grid[batch_indices].long()
