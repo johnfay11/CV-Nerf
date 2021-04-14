@@ -275,6 +275,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
 
     pred_ims = []
     for i, pose_mat in enumerate(render_poses):
+        print('Rendering pose %d out of %d poses', i, len(render_poses))
         r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]).cuda())
 
         h_grid = torch.linspace(0, height - 1, height).cuda()
