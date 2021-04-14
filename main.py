@@ -343,6 +343,9 @@ def main():
     optimizer = torch.optim.Adam(params=params, lr=args.lr, betas=(0.9, 0.999))
     steps = args.iter
     step = 0
+    
+    os.makedirs(os.path.join(args.base_dir, args.name), exist_ok=True)
+    os.makedirs(os.path.join(args.save_dir, args.name), exist_ok=True)
 
     if torch.cuda.is_available():
         coarse_model = coarse_model.cuda()
@@ -449,7 +452,7 @@ def main():
 
                 pred_frames = render_full(render_poses, [height, width, f], args.save_dir, coarse_model, fine_model,
                                           bounds, args)
-                imageio.mimwrite(os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)),
+                imageio.mimwrite(os.path.join(args.save_dir, args.name, 'test_vid_{:d}.mp4'.format(step)),
                                  (255 * np.clip(pred_frames[-1], 0, 1)).astype(np.uint8), fps=30, quality=8)
                 print('Writing video at', args.os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)))
 
@@ -464,10 +467,6 @@ def main():
                 }, path)
                 print('Saved checkpoints at', path)
             print('========')
-
-
-if __name__ == '__main__':
-    main()
 
 
 if __name__ == '__main__':
