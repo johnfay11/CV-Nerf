@@ -1,0 +1,13 @@
+name = fern
+save_dir = ./logs
+data_dir = ./data/nerf_llff_data/fern/
+dtype = llff
+
+lr_decay = 500
+
+n_samples = 64
+n_fine_samples = 128
+n_rays = 1024
+
+ndc = True
+
