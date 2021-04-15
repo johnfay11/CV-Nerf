@@ -26,7 +26,7 @@ def parse_settings():
 
     parser.add_argument("--dtype", type=str, default='llff',
                         help='llff or blender')
-    parser.add_argument("--ndc",type=bool,default=True)
+    parser.add_argument("--ndc",type=bool,default=False)
 
     parser.add_argument('--n_rays', type=int, default=4096)
     parser.add_argument('--n_samples', type=int, default=64)
