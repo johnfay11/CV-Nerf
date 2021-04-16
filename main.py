@@ -133,22 +133,19 @@ def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
     # alpha compositing; ensure that relu has already been applied!!
     alpha = 1.0 - torch.exp(-func.relu((raw_rgba[..., 3] + _noise) * deltas))
 
-    # apply sigmoid activation to colors (see architecture diagram); ensure that sigmoid has already been applied!!
-    colors = raw_rgba[..., :3]
-
     # compute T_i(s) using alpha values (see eq. (3))
-    T_weights = torch.cat([torch.ones((alpha.shape[0], 1)).cuda(), 1. - alpha + EPS], -1)
+    weights = torch.cat([torch.ones((alpha.shape[0], 1)).cuda(), 1. - alpha + EPS], -1)
 
     # have to use a roundabout way of computing cumprod because of the way it's not exclusive in pytorch
-    T_weights = alpha * torch.cumprod(T_weights, -1)[:, :-1]
+    T_weights = alpha * torch.cumprod(weights, -1)[:, :-1]
 
     # extract ray-wise RGB values by summing along the approximated path integral (eq. (3))
-    rgb_map = torch.sum(T_weights[..., None] * colors, -2)
+    rgb_map = torch.sum(T_weights[..., None] * raw_rgba[..., :3], -2)
 
     # add background if specified
     if bkg:
         # in RGB space, 1.0 is white
-        rgb_map += (1.0 - torch.sum(T_weights, -1)[..., None])
+        rgb_map = rgb_map + (1.0 - torch.sum(T_weights, -1)[..., None])
 
     return rgb_map, T_weights
 
@@ -162,7 +159,7 @@ def inv_transform_sampling(pts, weights, n):
 
     # numerical stability
     EPS = 1e-5
-    weights += EPS
+    weights = weights + EPS
 
     # map weights to a probability distribution
     pdf = weights / torch.sum(weights, -1, keepdim=True)
@@ -212,61 +209,59 @@ def render(rays, coarse_model, fine_model, bounds, args, n_rays=None):
     if n_rays is None:
         n_rays = args.n_rays
 
-    with torch.no_grad():
-        r_origins, r_dirs = rays
+    r_origins, r_dirs = rays
 
-        # represents theta and phi, as specified in the paper
-        d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
-        d_vec = torch.reshape(d_vec, (-1, 3)).float()
+    # represents theta and phi, as specified in the paper
+    d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
+    d_vec = torch.reshape(d_vec, (-1, 3)).float()
 
-        # partition [0, 1] using n points and rescale into [t_n, t_f]
-        t_samples = torch.linspace(0., 1., steps=args.n_samples).cuda()
-        t_samples = bounds[0] * (1. - t_samples) + bounds[1] * t_samples
-        t_samples = t_samples.expand([n_rays, args.n_samples])
+    # partition [0, 1] using n points and rescale into [t_n, t_f]
+    samples = torch.linspace(0., 1., steps=args.n_samples).cuda()
+    _t_samples = bounds[0] * (1. - samples) + bounds[1] * samples
+    t_samples = _t_samples.expand([n_rays, args.n_samples])
 
-        # get n_rays * n_samples random samples in [0, 1]
-        t_r = torch.rand(t_samples.shape).cuda()
+    # get n_rays * n_samples random samples in [0, 1]
+    t_r = torch.rand(t_samples.shape).cuda()
 
-        # rescale by computing the middle of each interval
-        midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
+    # rescale by computing the middle of each interval
+    midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
 
-        # add back lowest and highest sample
-        u = torch.cat([midpoints, t_samples[..., -1:]], -1)
-        l = torch.cat([t_samples[..., :1], midpoints], -1)
-        t_samples = l + (u - l) * t_r
+    # add back lowest and highest sample
+    u = torch.cat([midpoints, t_samples[..., -1:]], -1)
+    l = torch.cat([t_samples[..., :1], midpoints], -1)
+    t_samples = l + (u - l) * t_r
 
-        # compute the (x, y, z) coords of each timestep using ray origins and directions
-        # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
-        coords = r_dirs[..., None, :] * t_samples[..., :, None]
-        coords = r_origins[..., None, :] + coords
+    # compute the (x, y, z) coords of each timestep using ray origins and directions
+    # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
+    c_coords = r_origins[..., None, :] + r_dirs[..., None, :] * t_samples[..., :, None]
 
     # duplicate angle for each point
-    _d_vec = d_vec[..., None, :].expand(coords.shape)
+    _d_vec = d_vec[..., None, :].expand(c_coords.shape)
 
     # Returned from model; tensor of size n_rays x n_samples x 4
-    rgba = coarse_model(coords, _d_vec) if coarse_model is not None else None
+    rgba = coarse_model(c_coords, _d_vec) if coarse_model is not None else None
 
     # tensor of size n_rays x 3
     rgb, weights = process_volume_info(rgba, t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
 
     # remove weights not used for hierarchical sampling
     avg_pts = (t_samples[..., 1:] + t_samples[..., :-1]) / 2.0
-    _weights = weights[..., 1:-1]
 
-    fine_samples = inv_transform_sampling(avg_pts, _weights, args.n_fine_samples)
+    fine_samples = inv_transform_sampling(avg_pts, weights[..., 1:-1], args.n_fine_samples)
+    fine_samples = fine_samples.detach()
     # Combine coarse and fine samples; TODO: determine if this is right.
-    t_samples = torch.cat([t_samples, fine_samples], -1)
+    f_t_samples = torch.cat([t_samples, fine_samples], -1)
 
     # compute coordinates, as shown above
-    coords = r_origins[..., None, :] + r_dirs[..., None, :] * t_samples[..., :, None]
+    f_coords = r_origins[..., None, :] + r_dirs[..., None, :] * f_t_samples[..., :, None]
 
-    _d_vec = d_vec[..., None, :].expand(coords.shape)
+    f_d_vec = d_vec[..., None, :].expand(f_coords.shape)
 
     # Returned from model; tensor of size n_rays x n_samples x 4
-    rgba_f = fine_model(coords, _d_vec)
+    rgba_f = fine_model(f_coords, f_d_vec)
 
     # tensor of size n_rays x 3
-    rgb_f, weights_f = process_volume_info(rgba_f, t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
+    rgb_f, weights_f = process_volume_info(rgba_f, f_t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
     return rgb, rgb_f
 
 
@@ -443,8 +438,8 @@ def main():
 
         optimizer.zero_grad()
 
-        loss = torch.mean((rgb_c - batch_pixels) ** 2).item()
-        loss += 0.0 if rgb_f is None else torch.mean((rgb_f - batch_pixels) ** 2)
+        loss = torch.mean((rgb_c - batch_pixels) ** 2)
+        loss = loss if rgb_f is None else loss +torch.mean((rgb_f - batch_pixels) ** 2)
 
         loss.backward()
         optimizer.step()

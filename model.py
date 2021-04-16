@@ -3,6 +3,9 @@ import torch as torch
 import torch.nn as nn
 import torch.nn.functional as func
 from math import sin, cos, pi
+torch.autograd.set_detect_anomaly(True)
+
+
 
 """
 From paper:
