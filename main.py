@@ -438,7 +438,7 @@ def main():
         optimizer.zero_grad()
 
         loss = torch.mean((rgb_c - batch_pixels) ** 2).item()
-        loss += 0.0 if rgb_f is None else torch.mean((rgb_f - batch_pixels) ** 2).item()
+        loss += 0.0 if rgb_f is None else torch.mean((rgb_f - batch_pixels) ** 2)
 
         loss.backward()
         optimizer.step()
@@ -455,7 +455,7 @@ def main():
         with torch.no_grad():
             if step % args.update_freq == 0:
                 print('Step: ' + str(step))
-                print('Loss: ' + str(loss))
+                print('Loss: ' + str(loss.item()))
                 print('Step time: ' + str(step_time))
 
                 # source: https://stackoverflow.com/questions/58216000/get-total-amount-of-free-gpu-memory-and-available-using-pytorch
