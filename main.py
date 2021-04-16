@@ -76,6 +76,7 @@ def compute_rays(h, w, f, pose):
     h = torch.tensor(h)
     w = torch.tensor(w)
     f = torch.tensor(f)
+
     pose = torch.tensor(pose)
     h = h.cuda()
     w = w.cuda()
@@ -85,10 +86,10 @@ def compute_rays(h, w, f, pose):
     # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays
 
     # spans from 0 to h - 1, row-wise
-    y_grid = torch.linspace(0, h - 1, h)
+    y_grid = torch.linspace(0, h - 1, h).cuda()
 
     # spans from 0 to w - 1, column-wise
-    x_grid = torch.linspace(0, w - 1, w)
+    x_grid = torch.linspace(0, w - 1, w).cuda()
 
     # discretize image into hxw grid; note that meshgrid is implemented poorly, so we have to use numpy
     x, y = torch.meshgrid(x_grid, y_grid)
@@ -281,8 +282,7 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
         r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]).cuda())
 
         if args.ndc:
-            r_origins, r_dirs = get_ndc(height,width,f,1.,r_origins,r_dirs)
-
+            r_origins, r_dirs = get_ndc(height, width, f, 1., r_origins, r_dirs)
 
         h_grid = torch.linspace(0, height - 1, height).cuda()
         w_grid = torch.linspace(0, width - 1, width).cuda()
@@ -298,28 +298,28 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
         _d_seen_indices = []  # TODO: remove after testing
         batch = []
         for j in range(n_batches):
-          #print('batch %d of %d' % (j, n_batches))
+            # print('batch %d of %d' % (j, n_batches))
 
-          batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size, grid.shape[0]))
+            batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size, grid.shape[0]))
 
-          #if args.debug:
-          #    _d_seen_indices.extend(list(batch_indices))
+            # if args.debug:
+            #    _d_seen_indices.extend(list(batch_indices))
 
-          batch_pixels = grid[batch_indices.reshape((-1,))].long()
+            batch_pixels = grid[batch_indices.reshape((-1,))].long()
 
-          _r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
-          _r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
-          batch_rays = torch.stack([_r_origins, _r_dirs], 0)
+            _r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
+            _r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
+            batch_rays = torch.stack([_r_origins, _r_dirs], 0)
 
-          _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args, batch_indices.shape[0])
-          #print(batch_rays.shape)
-          #print(rgb_f.shape)
-          batch.append(rgb_f.cpu().numpy())
-          #pred_ims.append(rgb_f.cpu().numpy())
+            _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args, batch_indices.shape[0])
+            # print(batch_rays.shape)
+            # print(rgb_f.shape)
+            batch.append(rgb_f.cpu().numpy())
+            # pred_ims.append(rgb_f.cpu().numpy())
 
-        #print(batch)
+        # print(batch)
         im = np.concatenate(batch, 0).reshape((height, width, 3))
-        #print(im.shape)
+        # print(im.shape)
         pred_ims.append(im)
         # convert to 8bytes
         im_8 = (255 * np.clip(im, 0, 1)).astype(np.uint8)
@@ -386,18 +386,14 @@ def main():
     os.makedirs(os.path.join(args.base_dir, args.name), exist_ok=True)
     os.makedirs(os.path.join(args.save_dir, args.name), exist_ok=True)
 
-    if torch.cuda.is_available():
-        device = torch.device('cuda')
-    else:
-        print('WARNING: No CUDA devices found. Using CPU (not recommended).')
-        device = torch.device('cpu')
-
     # move data to the gpu
-    fine_model = fine_model.to(device)
-    coarse_model = coarse_model.to(device)
-    images = torch.Tensor(images).to(device)
-    poses = torch.Tensor(poses).to(device)
-
+    if torch.cuda.is_available():
+        coarse_model = coarse_model.cuda()
+        fine_model = fine_model.cuda()
+        images = torch.Tensor(images).cuda()
+        poses = torch.Tensor(poses).cuda()
+    elif not args.debug:
+        raise ValueError("CUDA is not available")
     # training loop
     for i in range(steps):
         step += 1
@@ -436,6 +432,12 @@ def main():
         batch_rays = torch.stack([r_origins, r_dirs], 0)
         batch_pixels = im[batch_pixels[:, 0], batch_pixels[:, 1]]
 
+        if torch.cuda.is_available():
+            batch_rays = batch_rays.cuda()
+            batch_pixels = batch_pixels.cuda()
+        elif not args.debug:
+            raise ValueError("CUDA is not available")
+
         # renders rays into RGB values
         rgb_c, rgb_f = render(batch_rays, coarse_model, fine_model, bounds, args)
 
@@ -473,8 +475,10 @@ def main():
                 print('Free GPU Memory: ' + str(f))
 
             if step % args.video_freq == 0:
-                render_poses = render_poses.to(device)
-
+                if torch.cuda.is_available():
+                    render_poses = render_poses.cuda()
+                else:
+                    raise ValueError("CUDA is not available")
                 pred_frames = render_full(render_poses, [height, width, f], args.save_dir, coarse_model, fine_model,
                                           bounds, args)
                 imageio.mimwrite(os.path.join(args.save_dir, args.name, 'test_vid_{:d}.mp4'.format(step)),
