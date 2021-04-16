@@ -73,14 +73,14 @@ def load_dataset(args):
 
 
 def compute_rays(h, w, f, pose):
-    # h = torch.tensor(h)
-    # w = torch.tensor(w)
-    # f = torch.tensor(f)
-    # h = h.cuda()
-    # w = w.cuda()
-    # f = f.cuda()
-    # pose = pose.cuda()
-
+    h = torch.tensor(h)
+    w = torch.tensor(w)
+    f = torch.tensor(f)
+    pose = torch.tensor(pose)
+    h = h.cuda()
+    w = w.cuda()
+    f = f.cuda()
+    pose = pose.cuda()
     # see: https://graphics.cs.wisc.edu/WP/cs559-fall2016/files/2016/12/shirley_chapter_4.pdf and
     # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays
 
@@ -122,9 +122,11 @@ def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
     if noise > 0.0:
         _noise = torch.randn(raw_rgba[..., 3].shape) * noise
 
+    _noise = torch.tensor(_noise).cuda()
+
     # compute distances between samples (denotes as deltas in equation (3))
     deltas = t_samples[..., 1:] - t_samples[..., :-1]
-    last_delta = torch.Tensor([INF_DIST]).expand(deltas[..., :1].shape)
+    last_delta = torch.Tensor([INF_DIST]).expand(deltas[..., :1].shape).cuda()
     deltas = torch.cat([deltas, last_delta], -1) * torch.norm(r_dirs[..., None, :], dim=-1)
 
     # alpha compositing; ensure that relu has already been applied!!
@@ -134,7 +136,7 @@ def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
     colors = raw_rgba[..., :3]
 
     # compute T_i(s) using alpha values (see eq. (3))
-    T_weights = torch.cat([torch.ones((alpha.shape[0], 1)), 1. - alpha + EPS], -1)
+    T_weights = torch.cat([torch.ones((alpha.shape[0], 1)).cuda(), 1. - alpha + EPS], -1)
 
     # have to use a roundabout way of computing cumprod because of the way it's not exclusive in pytorch
     T_weights = alpha * torch.cumprod(T_weights, -1)[:, :-1]
@@ -166,11 +168,11 @@ def inv_transform_sampling(pts, weights, n):
 
     # construct cdf (denote F) from pdf
     cdf = torch.cumsum(pdf, -1)
-    cdf = [torch.zeros_like(cdf[..., :1]), cdf]
+    cdf = [torch.zeros_like(cdf[..., :1]).cuda(), cdf]
     cdf = torch.cat(cdf, -1)
 
     # uniformly sample points
-    unif_samp = torch.rand(list(cdf.shape[:-1]) + [n])
+    unif_samp = torch.rand(list(cdf.shape[:-1]) + [n]).cuda()
 
     """
     Invert the CDF and compute F^{-1}(U). This reduces to a searching for domain values of F that contain the 
@@ -180,7 +182,7 @@ def inv_transform_sampling(pts, weights, n):
     - http://www.cse.psu.edu/~rtc12/CSE586/lectures/cse586samplingPreMCMC.pdf
     """
 
-    # unif_samp = unif_samp.contiguous()
+    unif_samp = unif_samp.contiguous()
     # luckily, searchsorted implements this searching functionality!
     i = torch.searchsorted(cdf, unif_samp, right=True)
 
@@ -204,35 +206,38 @@ def inv_transform_sampling(pts, weights, n):
 
 
 def render(rays, coarse_model, fine_model, bounds, args, n_rays=None):
+    inference = coarse_model is None
+
     if n_rays is None:
         n_rays = args.n_rays
 
-    r_origins, r_dirs = rays
+    with torch.no_grad():
+        r_origins, r_dirs = rays
 
-    # represents theta and phi, as specified in the paper
-    d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
-    d_vec = torch.reshape(d_vec, (-1, 3)).float()
+        # represents theta and phi, as specified in the paper
+        d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
+        d_vec = torch.reshape(d_vec, (-1, 3)).float()
 
-    # partition [0, 1] using n points and rescale into [t_n, t_f]
-    t_samples = torch.linspace(0., 1., steps=args.n_samples)
-    t_samples = bounds[0] * (1. - t_samples) + bounds[1] * t_samples
-    t_samples = t_samples.expand([n_rays, args.n_samples])
+        # partition [0, 1] using n points and rescale into [t_n, t_f]
+        t_samples = torch.linspace(0., 1., steps=args.n_samples).cuda()
+        t_samples = bounds[0] * (1. - t_samples) + bounds[1] * t_samples
+        t_samples = t_samples.expand([n_rays, args.n_samples])
 
-    # get n_rays * n_samples random samples in [0, 1]
-    t_r = torch.rand(t_samples.shape)
+        # get n_rays * n_samples random samples in [0, 1]
+        t_r = torch.rand(t_samples.shape).cuda()
 
-    # rescale by computing the middle of each interval
-    midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
+        # rescale by computing the middle of each interval
+        midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
 
-    # add back lowest and highest sample
-    u = torch.cat([midpoints, t_samples[..., -1:]], -1)
-    l = torch.cat([t_samples[..., :1], midpoints], -1)
-    t_samples = l + (u - l) * t_r
+        # add back lowest and highest sample
+        u = torch.cat([midpoints, t_samples[..., -1:]], -1)
+        l = torch.cat([t_samples[..., :1], midpoints], -1)
+        t_samples = l + (u - l) * t_r
 
-    # compute the (x, y, z) coords of each timestep using ray origins and directions
-    # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
-    coords = r_dirs[..., None, :] * t_samples[..., :, None]
-    coords = r_origins[..., None, :] + coords
+        # compute the (x, y, z) coords of each timestep using ray origins and directions
+        # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
+        coords = r_dirs[..., None, :] * t_samples[..., :, None]
+        coords = r_origins[..., None, :] + coords
 
     # duplicate angle for each point
     _d_vec = d_vec[..., None, :].expand(coords.shape)
@@ -273,53 +278,53 @@ def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bou
     pred_ims = []
     for i, pose_mat in enumerate(render_poses):
         print('Rendering pose %d out of %d poses' % (i, len(render_poses)))
-        r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]))
+        r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]).cuda())
 
         if args.ndc:
-            r_origins, r_dirs = get_ndc(height, width, f, 1., r_origins, r_dirs)
+            r_origins, r_dirs = get_ndc(height,width,f,1.,r_origins,r_dirs)
 
-        with torch.no_grad:
-            h_grid = torch.linspace(0, height - 1, height)
-            w_grid = torch.linspace(0, width - 1, width)
-            grid = torch.meshgrid(h_grid, w_grid)
-            grid = torch.stack(grid, -1)
 
-            grid = torch.reshape(grid, [-1, 2])
+        h_grid = torch.linspace(0, height - 1, height).cuda()
+        w_grid = torch.linspace(0, width - 1, width).cuda()
+        grid = torch.meshgrid(h_grid, w_grid)
+        grid = torch.stack(grid, -1)
 
-            batch_size = args.n_rays
-            n_batches = int(np.ceil((height * width) / batch_size))
+        grid = torch.reshape(grid, [-1, 2])
 
-            # batching so that we don't saturate GPU memory
-            _d_seen_indices = []  # TODO: remove after testing
-            batch = []
-            for j in range(n_batches):
-                # print('batch %d of %d' % (j, n_batches))
+        batch_size = args.n_rays
+        n_batches = int(np.ceil((height * width) / batch_size))
 
-                batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size, grid.shape[0]))
+        # batching so that we don't saturate GPU memory
+        _d_seen_indices = []  # TODO: remove after testing
+        batch = []
+        for j in range(n_batches):
+          #print('batch %d of %d' % (j, n_batches))
 
-                # if args.debug:
-                #    _d_seen_indices.extend(list(batch_indices))
+          batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size, grid.shape[0]))
 
-                batch_pixels = grid[batch_indices.reshape((-1,))].long()
+          #if args.debug:
+          #    _d_seen_indices.extend(list(batch_indices))
 
-                _r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
-                _r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
-                batch_rays = torch.stack([_r_origins, _r_dirs], 0)
+          batch_pixels = grid[batch_indices.reshape((-1,))].long()
 
-                _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args, batch_indices.shape[0])
-                # print(batch_rays.shape)
-                # print(rgb_f.shape)
-                batch.append(rgb_f.cpu().numpy())
-                # pred_ims.append(rgb_f.cpu().numpy())
+          _r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
+          _r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
+          batch_rays = torch.stack([_r_origins, _r_dirs], 0)
 
-            # print(batch)
-            im = np.concatenate(batch, 0).reshape((height, width, 3))
-            # print(im.shape)
-            pred_ims.append(im)
-            # convert to 8bytes
-            im_8 = (255 * np.clip(im, 0, 1)).astype(np.uint8)
-            filename = os.path.join(save_dir, '{:04d}.png'.format(i))
-            imageio.imwrite(filename, im_8)
+          _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args, batch_indices.shape[0])
+          #print(batch_rays.shape)
+          #print(rgb_f.shape)
+          batch.append(rgb_f.cpu().numpy())
+          #pred_ims.append(rgb_f.cpu().numpy())
+
+        #print(batch)
+        im = np.concatenate(batch, 0).reshape((height, width, 3))
+        #print(im.shape)
+        pred_ims.append(im)
+        # convert to 8bytes
+        im_8 = (255 * np.clip(im, 0, 1)).astype(np.uint8)
+        filename = os.path.join(save_dir, '{:04d}.png'.format(i))
+        imageio.imwrite(filename, im_8)
 
     pred_ims = np.stack(pred_ims, 0)
     return pred_ims
