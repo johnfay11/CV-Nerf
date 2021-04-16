@@ -138,9 +138,9 @@ def load_llff(topdir):
             images.append(os.path.join(imgdir, file))
  
     images_read = []
-    j=0
+    j = 0
     for file in images:
-        j+=1
+        j +=1
         print("Image: " + str(j))
         # print(file)
         if file[-3:] == 'png':
@@ -224,7 +224,7 @@ def load_llff_data(topdir):
     Returns images, poses, rendered poses, height,width,focal point matrix, i_test, and bounds
     """
 
-    poses,bounds,images = load_llff(topdir)
+    poses, bounds, images = load_llff(topdir)
 
     #deals with issues w/ order of rotation matrix in poses + moving variable dim to axis 0
     poses = np.concatenate([poses[:,1:2,:], -poses[:,0:1,:],poses[:,2:,:]],1)

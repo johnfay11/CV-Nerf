@@ -1,6 +1,6 @@
 name = fern
 save_dir = ./logs
-data_dir = ./data/nerf_llff_data/fern/
+data_dir = ./data/nerf_llff_data/fern
 dtype = llff
 
 lr_decay = 500
