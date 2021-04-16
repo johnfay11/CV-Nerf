@@ -278,7 +278,7 @@ def load_llff_data(topdir):
 def get_ndc(height, width, focal, near, r_ori, r_dir):
     #MATH FROM: https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py
     tm = -(near + r_ori[...,2]) / r_dir[...,2]
-    r_ori = r_ori + t[...,None]*r_ori
+    r_ori = r_ori + tm[...,None]*r_ori
 
     ori0 = -1./(width/(2.*focal)) * r_ori[...,0] / r_ori[...,2]
     ori1 = -1./(height/(2.*focal)) * r_ori[...,1] / r_ori[...,2]
