@@ -138,9 +138,9 @@ def load_llff(topdir):
             images.append(os.path.join(imgdir, file))
  
     images_read = []
-    j=0
+    j = 0
     for file in images:
-        j+=1
+        j +=1
         print("Image: " + str(j))
         # print(file)
         if file[-3:] == 'png':
@@ -153,6 +153,7 @@ def load_llff(topdir):
 
         
     images = np.stack(images_read,-1) #stack all read images together in proper form
+    print("stack finished")
 
     return poses, bounds, images
 
@@ -224,7 +225,7 @@ def load_llff_data(topdir):
     Returns images, poses, rendered poses, height,width,focal point matrix, i_test, and bounds
     """
 
-    poses,bounds,images = load_llff(topdir)
+    poses, bounds, images = load_llff(topdir)
 
     #deals with issues w/ order of rotation matrix in poses + moving variable dim to axis 0
     poses = np.concatenate([poses[:,1:2,:], -poses[:,0:1,:],poses[:,2:,:]],1)
@@ -269,14 +270,14 @@ def load_llff_data(topdir):
     images = images.astype(np.float32)
     poses = poses.astype(np.float32)
 
-
             #images, poses, render_poses, hwf, i_test, bounds
+    print("LLFF data loaded")
     return images,poses[:,:3,:4],render_poses,poses[0,:3,-1],i_test, bounds
 
 def get_ndc(height, width, focal, near, r_ori, r_dir):
-    #MATH FROM: https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py
+    #FROM: https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py
     tm = -(near + r_ori[...,2]) / r_dir[...,2]
-    r_ori = r_ori + t[...,None]*r_ori
+    r_ori = r_ori + tm[...,None]*r_ori
 
     ori0 = -1./(width/(2.*focal)) * r_ori[...,0] / r_ori[...,2]
     ori1 = -1./(height/(2.*focal)) * r_ori[...,1] / r_ori[...,2]
