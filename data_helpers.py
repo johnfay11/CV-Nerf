@@ -153,6 +153,7 @@ def load_llff(topdir):
 
         
     images = np.stack(images_read,-1) #stack all read images together in proper form
+    print("stack finished")
 
     return poses, bounds, images
 
@@ -271,6 +272,7 @@ def load_llff_data(topdir):
 
 
             #images, poses, render_poses, hwf, i_test, bounds
+    print("LLFF data loaded")
     return images,poses[:,:3,:4],render_poses,poses[0,:3,-1],i_test, bounds
 
 def get_ndc(height, width, focal, near, r_ori, r_dir):
