@@ -67,7 +67,7 @@ class Model(nn.Module):
         torch.nn.init.xavier_uniform_(self.l10.weight, gain=nn.init.calculate_gain('relu'))
 
         self.l11 = nn.Linear(128, 3)
-        torch.nn.init.xavier_uniform_(self.l11.weight, gain=nn.init.calculate_gain('relu'))
+        torch.nn.init.xavier_uniform_(self.l11.weight)
 
         N_1 = 10
         N_2 = 4
@@ -134,5 +134,5 @@ class Model(nn.Module):
 
         out = torch.cat([out, X_ang], -1)
         out = func.relu(self.l10(out))
-        rgb = func.sigmoid(self.l11(out))
+        rgb = self.l11(out)
         return torch.cat([rgb, density], -1)

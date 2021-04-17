@@ -11,3 +11,6 @@ n_rays = 1024
 
 white_bkg = True
 half_res = True
+
+precrop_iters = 500
+precrop_frac = 0.5

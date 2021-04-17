@@ -55,6 +55,9 @@ def parse_settings():
     parser.add_argument('--save_freq', type=int, default=2500)  # 2500
     parser.add_argument('--video_freq', type=int, default=5000)  # 5000
     parser.add_argument('--update_freq', type=int, default=50)  # 50
+
+    parser.add_argument('--precrop_iters', type=int, default=0)
+    parser.add_argument('--precrop_frac', type=float, default=0.5)
     return parser.parse_args()
 
 
@@ -66,30 +69,32 @@ def load_dataset(args):
     # TODO: return images, poses, poses to render, camera intrinsics, maybe other information?
 
     if args.dtype == 'blender':
+        print('Loading blender data.')
         return load_blender_data(args.data_dir, half_res=args.half_res, testskip=args.testskip, bkg=args.white_bkg)
     else:
+        print('Loading LLFF data.')
         return load_llff_data(args.data_dir)
-        # raise NotImplementedError("please implement me! (LLFF)")
 
 
 def compute_rays(h, w, f, pose):
-    h = torch.tensor(h)
-    w = torch.tensor(w)
-    f = torch.tensor(f)
+    #h = torch.tensor(h)
+    #w = torch.tensor(w)
+    #f = torch.tensor(f)
 
-    pose = torch.tensor(pose)
-    h = h.cuda()
-    w = w.cuda()
-    f = f.cuda()
-    pose = pose.cuda()
+    #pose = torch.tensor(pose)
+    #h = h.cuda()
+    #w = w.cuda()
+    #f = f.cuda()
+    #pose = pose.cuda()
     # see: https://graphics.cs.wisc.edu/WP/cs559-fall2016/files/2016/12/shirley_chapter_4.pdf and
     # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays
 
     # spans from 0 to h - 1, row-wise
-    y_grid = torch.linspace(0, h - 1, h).cuda()
+    #y_grid = torch.linspace(0, h - 1, h).cuda()
+    y_grid = torch.linspace(0, h - 1, h)
 
     # spans from 0 to w - 1, column-wise
-    x_grid = torch.linspace(0, w - 1, w).cuda()
+    x_grid = torch.linspace(0, w - 1, w)
 
     # discretize image into hxw grid; note that meshgrid is implemented poorly, so we have to use numpy
     x, y = torch.meshgrid(x_grid, y_grid)
@@ -123,30 +128,31 @@ def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
     if noise > 0.0:
         _noise = torch.randn(raw_rgba[..., 3].shape) * noise
 
-    _noise = torch.tensor(_noise).cuda()
+    rgb = torch.sigmoid(raw_rgba[..., :3])
+    #_noise = torch.tensor(_noise).cuda()
 
     # compute distances between samples (denotes as deltas in equation (3))
     deltas = t_samples[..., 1:] - t_samples[..., :-1]
-    last_delta = torch.Tensor([INF_DIST]).expand(deltas[..., :1].shape).cuda()
-    deltas = torch.cat([deltas, last_delta], -1) * torch.norm(r_dirs[..., None, :], dim=-1)
+    last_delta = torch.tensor([INF_DIST]).expand(deltas[..., :1].shape)
+    deltas = torch.cat([deltas, last_delta], -1)
+    deltas = deltas * torch.norm(r_dirs[..., None, :], dim=-1)
 
     # alpha compositing; ensure that relu has already been applied!!
-    alpha = 1.0 - torch.exp(-func.relu((raw_rgba[..., 3] + _noise) * deltas))
+    alpha = 1.0 - torch.exp(-torch.relu((raw_rgba[..., 3] + _noise)) * deltas)
 
     # compute T_i(s) using alpha values (see eq. (3))
-    weights = torch.cat([torch.ones((alpha.shape[0], 1)).cuda(), 1. - alpha + EPS], -1)
+    weights = torch.cat([torch.ones((alpha.shape[0], 1)), 1. - alpha + EPS], -1)
 
     # have to use a roundabout way of computing cumprod because of the way it's not exclusive in pytorch
     T_weights = alpha * torch.cumprod(weights, -1)[:, :-1]
 
     # extract ray-wise RGB values by summing along the approximated path integral (eq. (3))
-    rgb_map = torch.sum(T_weights[..., None] * raw_rgba[..., :3], -2)
+    rgb_map = torch.sum(T_weights[..., None] * rgb, -2)
 
     # add background if specified
     if bkg:
         # in RGB space, 1.0 is white
-        rgb_map = rgb_map + (1.0 - torch.sum(T_weights, -1)[..., None])
-
+        rgb_map = rgb_map + (1.0 - (torch.sum(T_weights, -1))[..., None])
     return rgb_map, T_weights
 
 
@@ -166,11 +172,10 @@ def inv_transform_sampling(pts, weights, n):
 
     # construct cdf (denote F) from pdf
     cdf = torch.cumsum(pdf, -1)
-    cdf = [torch.zeros_like(cdf[..., :1]).cuda(), cdf]
-    cdf = torch.cat(cdf, -1)
+    cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], -1)
 
     # uniformly sample points
-    unif_samp = torch.rand(list(cdf.shape[:-1]) + [n]).cuda()
+    unif_samp = torch.rand(list(cdf.shape[:-1]) + [n])
 
     """
     Invert the CDF and compute F^{-1}(U). This reduces to a searching for domain values of F that contain the 
@@ -200,12 +205,10 @@ def inv_transform_sampling(pts, weights, n):
     scale = cdf[..., 1] - cdf[..., 0]
     # need this for numerical stability
     scale = torch.where(scale < EPS, torch.ones_like(scale), scale)
-    return (pts[..., 1] - pts[..., 0]) * ((unif_samp - cdf[..., 0]) / scale) + cdf[..., 0]
+    return (pts[..., 1] - pts[..., 0]) * ((unif_samp - cdf[..., 0]) / scale) + pts[..., 0]
 
 
 def render(rays, coarse_model, fine_model, bounds, args, n_rays=None):
-    inference = coarse_model is None
-
     if n_rays is None:
         n_rays = args.n_rays
 
@@ -213,15 +216,18 @@ def render(rays, coarse_model, fine_model, bounds, args, n_rays=None):
 
     # represents theta and phi, as specified in the paper
     d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
-    d_vec = torch.reshape(d_vec, (-1, 3)).float()
+    d_vec = torch.reshape(d_vec, [-1, 3]).float()
+
+    r_origins = r_origins.float()
+    r_dirs = r_dirs.float()
 
     # partition [0, 1] using n points and rescale into [t_n, t_f]
-    samples = torch.linspace(0., 1., steps=args.n_samples).cuda()
+    samples = torch.linspace(0., 1., steps=args.n_samples)
     _t_samples = bounds[0] * (1. - samples) + bounds[1] * samples
     t_samples = _t_samples.expand([n_rays, args.n_samples])
 
     # get n_rays * n_samples random samples in [0, 1]
-    t_r = torch.rand(t_samples.shape).cuda()
+    t_r = torch.rand(t_samples.shape)
 
     # rescale by computing the middle of each interval
     midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
@@ -250,10 +256,10 @@ def render(rays, coarse_model, fine_model, bounds, args, n_rays=None):
     fine_samples = inv_transform_sampling(avg_pts, weights[..., 1:-1], args.n_fine_samples)
     fine_samples = fine_samples.detach()
     # Combine coarse and fine samples; TODO: determine if this is right.
-    f_t_samples = torch.cat([t_samples, fine_samples], -1)
+    f_t_vals, _ = torch.sort(torch.cat([t_samples, fine_samples], -1), -1)
 
     # compute coordinates, as shown above
-    f_coords = r_origins[..., None, :] + r_dirs[..., None, :] * f_t_samples[..., :, None]
+    f_coords = r_origins[..., None, :] + r_dirs[..., None, :] * f_t_vals[..., :, None]
 
     f_d_vec = d_vec[..., None, :].expand(f_coords.shape)
 
@@ -261,7 +267,7 @@ def render(rays, coarse_model, fine_model, bounds, args, n_rays=None):
     rgba_f = fine_model(f_coords, f_d_vec)
 
     # tensor of size n_rays x 3
-    rgb_f, weights_f = process_volume_info(rgba_f, f_t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
+    rgb_f, weights_f = process_volume_info(rgba_f, f_coords, r_dirs, noise=args.noise, bkg=args.white_bkg)
     return rgb, rgb_f
 
 
@@ -367,12 +373,17 @@ def main():
     else:
         train_idx, val_idx, test_idx = i_split
 
+    if torch.cuda.is_available():
+        dev = torch.device('cuda')
+    else:
+        dev = torch.device('cpu')
+
     # unpack camera intrinsics
     height, width, f = cam_params
     height, width = int(height), int(width)
 
-    coarse_model = Model(xyz_L=args.L_pos, angle_L=args.L_ang)
-    fine_model = Model(xyz_L=args.L_pos, angle_L=args.L_ang)
+    coarse_model = Model(xyz_L=args.L_pos, angle_L=args.L_ang).to(dev)
+    fine_model = Model(xyz_L=args.L_pos, angle_L=args.L_ang).to(dev)
 
     params = list(coarse_model.parameters()) + list(fine_model.parameters())
 
@@ -383,14 +394,17 @@ def main():
     os.makedirs(os.path.join(args.base_dir, args.name), exist_ok=True)
     os.makedirs(os.path.join(args.save_dir, args.name), exist_ok=True)
 
+    render_poses = torch.tensor(render_poses).to(dev)
+    images = torch.tensor(images).to(dev)
+    poses = torch.tensor(poses).to(dev)
     # move data to the gpu
-    if torch.cuda.is_available():
-        coarse_model = coarse_model.cuda()
-        fine_model = fine_model.cuda()
-        images = torch.Tensor(images).cuda()
-        poses = torch.Tensor(poses).cuda()
-    elif not args.debug:
-        raise ValueError("CUDA is not available")
+    #if torch.cuda.is_available():
+    #    coarse_model = coarse_model.cuda()
+    #    fine_model = fine_model.cuda()
+    #    images = torch.Tensor(images).cuda()
+    #    poses = torch.Tensor(poses).cuda()
+    #elif not args.debug:
+    #    raise ValueError("CUDA is not available")
     # training loop
     for i in range(steps):
         step += 1
@@ -403,19 +417,29 @@ def main():
 
         # extract projection matrix:
         # (https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera)
-        pose = torch.tensor(poses[im_idx, :3, :4])
+        pose = poses[im_idx, :3, :4]
 
         # both origins and orientations are needed to determine a ray
-        r_origins, r_dirs = compute_rays(height, width, f, pose)
+        r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose))
 
         if args.ndc:
             r_origins, r_dirs = get_ndc(height, width, f, 1., r_origins, r_dirs)
 
-        # select a random subset of rays from a H x W grid
-        h_grid = torch.linspace(0, height - 1, height)
-        w_grid = torch.linspace(0, width - 1, width)
-        grid = torch.meshgrid(h_grid, w_grid)
-        grid = torch.stack(grid, -1)
+        grid = None
+        if i < args.precrop_iters:
+            dH = int(height // 2 * args.precrop_frac)
+            dW = int(width // 2 * args.precrop_frac)
+            grid = torch.stack(
+                torch.meshgrid(
+                    torch.linspace(height // 2 - dH, height // 2 + dH - 1, 2 * dH),
+                    torch.linspace(width // 2 - dW, width // 2 + dW - 1, 2 * dW)
+                ), -1)
+        else:
+            # select a random subset of rays from a H x W grid
+            h_grid = torch.linspace(0, height - 1, height)
+            w_grid = torch.linspace(0, width - 1, width)
+            grid = torch.meshgrid(h_grid, w_grid)
+            grid = torch.stack(grid, -1)
 
         # (H x W, 2) tensor containing all possible pixels
         grid = torch.reshape(grid, [-1, 2])
@@ -427,11 +451,11 @@ def main():
         batch_rays = torch.stack([r_origins, r_dirs], 0)
         batch_pixels = im[batch_pixels[:, 0], batch_pixels[:, 1]]
 
-        if torch.cuda.is_available():
-            batch_rays = batch_rays.cuda()
-            batch_pixels = batch_pixels.cuda()
-        elif not args.debug:
-            raise ValueError("CUDA is not available")
+        #if torch.cuda.is_available():
+        #    batch_rays = batch_rays.cuda()
+        #    batch_pixels = batch_pixels.cuda()
+        #elif not args.debug:
+        #    raise ValueError("CUDA is not available")
 
         # renders rays into RGB values
         rgb_c, rgb_f = render(batch_rays, coarse_model, fine_model, bounds, args)
