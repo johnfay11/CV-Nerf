@@ -330,6 +330,8 @@ def decayed_learning_rate(step, decay_steps, initial_lr, decay_rate=0.1):
 
 
 def main():
+    torch.set_default_tensor_type('torch.cuda.FloatTensor')
+
     args = parse_settings()
 
     '''
@@ -392,8 +394,6 @@ def main():
     # training loop
     for i in range(steps):
         step += 1
-        print('========')
-        print('Step: ' + str(step))
 
         step_time = time.time()
 
@@ -465,9 +465,9 @@ def main():
                 a = torch.cuda.memory_allocated(0)
                 f = r - a  # free inside reserved
 
-                print('Total GPU Memory: ' + str(t))
-                print('Reserved GPU Memory: ' + str(r))
-                print('Free GPU Memory: ' + str(f))
+                #print('Total GPU Memory: ' + str(t))
+                #print('Reserved GPU Memory: ' + str(r))
+                #print('Free GPU Memory: ' + str(f))
 
             if step % args.video_freq == 0:
                 if torch.cuda.is_available():
@@ -490,7 +490,6 @@ def main():
                     'optimizer_dict': optimizer.state_dict(),
                 }, path)
                 print('Saved checkpoints at', path)
-            print('========')
 
 
 if __name__ == '__main__':

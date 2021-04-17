@@ -95,19 +95,6 @@ class Model(nn.Module):
     def _encoding_dim(num_comp, L):
         return 2 * num_comp * L
 
-    @staticmethod
-    def _pos_encoding(pos, out, L):
-        """
-        :param pos: pos positions, or angle unit vector (assumed dtype is python list)
-        :param L: defines number of terms in encoding (2*L terms)
-        :return: FloatTensor input for network
-        """
-        # for i in range(pos.shape[0]):
-        #    for j in range(L):
-        #        out[(i * L) + j] = (sin((2 ** j) * pi * pos[i]))
-        #        out[(i * L) + j + 1] = (cos((2 ** j) * pi * pos[i]))
-        # return out
-
     def forward(self, xyz, view_angle):
         """
         :param xyz: (x,y,z) position coordinate
