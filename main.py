@@ -1,64 +1,257 @@
-import configargparse
-import torch
-import torch.nn.functional as func
+import os, sys
 import numpy as np
-import copy
-from pathlib import Path
-
-import os
 import imageio
 import time
+import torch
+import torch.nn.functional as F
+from tqdm import tqdm, trange
 
+import configargparse
+
+from model import *
+from utils import *
 from data_helpers import load_blender_data, load_llff_data, get_ndc
-from model import Model
+
+# fix pytorch related constants
+np.random.seed(0)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+torch.autograd.set_detect_anomaly(True)
+torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
 
-def parse_settings():
-    # use standard config parser
-    parser = configargparse.ArgumentParser('args')
+def _batcher(ray_vec, b_size=32768, **kwargs):
+    res = {}
+    for i in range(0, ray_vec.shape[0], b_size):
+        ret = render_rays(ray_vec[i: i + b_size], **kwargs)
+        for k in ret:
+            if k not in res:
+                res[k] = []
+            res[k].append(ret[k])
+    return {k: torch.cat(res[k], 0) for k in res}
 
-    parser.add_argument('--config', is_config_file=True)
-    parser.add_argument('--name', type=str)
-    parser.add_argument('--save_dir', type=str, default='./logs')
-    parser.add_argument('--data_dir', type=str)
 
-    parser.add_argument('--base_dir', type=str, default='./results')
+def compute_rays(h, w, f, pose):
+    # see: https://graphics.cs.wisc.edu/WP/cs559-fall2016/files/2016/12/shirley_chapter_4.pdf and
+    # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays
 
-    parser.add_argument("--dtype", type=str, default='llff',
-                        help='llff or blender')
-    parser.add_argument("--ndc", type=bool, default=False)
+    # spans from 0 to h - 1, row-wise
+    # y_grid = torch.linspace(0, h - 1, h).cuda()
+    y_grid = torch.linspace(0, h - 1, h)
 
-    parser.add_argument('--n_rays', type=int, default=4096)
-    parser.add_argument('--n_samples', type=int, default=64)
-    parser.add_argument('--n_fine_samples', type=int, default=0)
+    # spans from 0 to w - 1, column-wise
+    x_grid = torch.linspace(0, w - 1, w)
 
-    # position encoding dimensions
-    parser.add_argument('--L_pos', type=int, default=10)
-    parser.add_argument('--L_ang', type=int, default=4)
+    # discretize image into hxw grid; note that meshgrid is implemented poorly, so we have to use numpy
+    x, y = torch.meshgrid(x_grid, y_grid)
+    x = x.t()
+    y = y.t()
 
-    parser.add_argument('--lr', type=float, default=5e-4, help='learning rate')
-    parser.add_argument('--lr_decay', type=float, default=250, help='learning rate decay')
+    # compute direction (3D vector) of each ray using virtual pinhole model
+    d_x = (x - w * .5) / f
+    d_y = -(y - h * .5) / f
+    dirs = torch.stack([d_x, d_y, -torch.ones_like(x)], -1)
 
-    parser.add_argument('--iter', type=int, default=100000)
+    # now, we project each ray direction into world space using the camera pose
+    proj = dirs[..., np.newaxis, :] * pose[:3, :3]
+    dirs = torch.sum(proj, -1)
 
-    # we might not need this parameter (could set to size of dataset)
-    parser.add_argument("--testskip", type=int, default=8)
+    # last column of projection matrix contains origin of all rays
+    origins = pose[:3, -1].expand(dirs.shape)
+    return origins, dirs
 
-    # this is useful for reducing the size of blender models
-    parser.add_argument('--half_res', action='store_true')
-    parser.add_argument('--debug', type=bool, default=False)
 
-    # white background is needed to accurately reproduce the synthetic examples
-    parser.add_argument('--white_bkg', type=bool, default=False)
-    parser.add_argument('--noise', type=float, default=1.0)
+def render(h, w, f, chunk=32768, rays=None, pose=None, ndc=True, near=0.0, far=1.0, **kwargs):
+    if pose is not None:
+        # this case is only for rendering videos (i.e. inference)
+        r_origins, r_dirs = compute_rays(h, w, f, pose)
+    else:
+        # use provided ray batch
+        r_origins, r_dirs = rays
 
-    parser.add_argument('--save_freq', type=int, default=2500)  # 2500
-    parser.add_argument('--video_freq', type=int, default=5000)  # 5000
-    parser.add_argument('--update_freq', type=int, default=50)  # 50
+    # normalize and reformat angle data
+    d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
+    d_vec = torch.reshape(d_vec, [-1, 3]).float()
 
-    parser.add_argument('--precrop_iters', type=int, default=0)
-    parser.add_argument('--precrop_frac', type=float, default=0.5)
-    return parser.parse_args()
+    # save current shape for later
+    local_shape = r_dirs.shape
+
+    # project into ndc format if working with real imagery
+    if ndc:
+        # for forward facing scenes
+        r_origins, r_dirs = get_ndc(h, w, f, 1.0, r_origins, r_dirs)
+
+    r_origins = torch.reshape(r_origins, [-1, 3]).float()
+    r_dirs = torch.reshape(r_dirs, [-1, 3]).float()
+
+    # prepare for batching
+    t_n, t_f = near * torch.ones_like(r_dirs[..., :1]), far * torch.ones_like(r_dirs[..., :1])
+    rays = torch.cat([r_origins, r_dirs, t_n, t_f], -1)
+    rays = torch.cat([rays, d_vec], -1)
+
+    # render via mini-batching
+    res = _batcher(rays, chunk, **kwargs)
+    for i in res:
+        shape = list(local_shape[:-1]) + list(res[i].shape[1:])
+        res[i] = torch.reshape(res[i], shape)
+
+    # unpack and return rgb data
+    ret_list = [res[k] for k in ['rgb_map']]
+    ret_dict = {k: res[k] for k in res if k not in  ['rgb_map']}
+    return ret_list + [ret_dict]
+
+
+def render_full(render_poses, cam_params, ck, render_kwargs, save_dir=None, factor=0):
+    height, width, focal = cam_params
+
+    # downsample if we're constrained for resources
+    if factor != 0:
+        height = height // factor
+        width = width // factor
+        focal = focal / factor
+
+    frames = []
+
+    for i, c2w in enumerate(tqdm(render_poses)):
+        rgb, _ = render(height, width, focal, chunk=ck, c2w=c2w[:3, :4], **render_kwargs)
+        frames.append(rgb.cpu().numpy())
+
+        if save_dir is not None:
+            rgb8 = cont_to_byte8_im(frames[-1])
+            filename = os.path.join(save_dir, '{:03d}.png'.format(i))
+            imageio.imwrite(filename, rgb8)
+
+    rgbs = np.stack(frames, 0)
+    return rgbs
+
+
+def create_model(args):
+    # hierarchical position encoding (see paper)
+    xyz_embedder = FreqEmbedding(10)
+    ang_embedder = FreqEmbedding(4)
+
+    coarse_model = Model().to(device)
+    grad_vars = list(coarse_model.parameters())
+
+    fine_model = Model().to(device)
+    grad_vars += list(fine_model.parameters())
+
+    forward_fn = lambda inputs, viewdirs, network_fn: model_forward(inputs, viewdirs, network_fn,
+                                                                        freq_xyz_fn=lambda v: xyz_embedder.embed(v),
+                                                                        freq_angle_fn=lambda v: ang_embedder.embed(v),
+                                                                        amort_chunk=args.amort_chunk)
+
+    # Create optimizer
+    optimizer = torch.optim.Adam(params=grad_vars, lr=args.lr, betas=(0.9, 0.999))
+
+    init = 0
+    render_kwargs_train = {
+        'forward': forward_fn,
+        'fine_model': fine_model,
+        'coarse_model': coarse_model,
+        'n_fine_samples': args.n_fine_samples,
+        'n_coarse_samples': args.n_coarse_samples,
+        'white_bkg': args.white_bkg,
+        'perturb': args.perturb,
+        'noise': args.noise,
+    }
+
+    # copy training settings and remove training-only parameters
+    render_kwargs_test = {k: render_kwargs_train[k] for k in render_kwargs_train}
+    render_kwargs_test['noise'] = 0.
+    render_kwargs_test['perturb'] = False
+
+    if args.dtype != 'llff' or args.no_ndc:
+        # ndc word positioning not necessary for synthetic data
+        render_kwargs_train['ndc'] = False
+    return render_kwargs_train, render_kwargs_test, init, grad_vars, optimizer
+
+# helper function for computing alpha values in process_volume_info
+def _alpha_composite(vals, deltas):
+    return 1.0 - torch.exp(deltas * -F.relu(vals))
+
+def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
+    INF_DIST = 1e10
+
+    # compute distances between samples (denotes as deltas in equation (3))
+    deltas = t_samples[..., 1:] - t_samples[..., :-1]
+    deltas = torch.cat([deltas, torch.tensor([INF_DIST]).expand(deltas[..., :1].shape)], -1)
+    deltas = deltas * torch.norm(r_dirs[..., None, :], dim=-1)
+
+    # extract last RGB layer
+    rgb = torch.sigmoid(raw_rgba[..., :3])
+
+    # add random noise to aid training
+    _noise = 0.
+    if noise > 0.:
+        _noise = torch.randn(raw_rgba[..., 3].shape) * noise
+
+    # alpha compositing; ensure that relu has already been applied!!
+    alpha = _alpha_composite(raw_rgba[..., 3] + _noise, deltas)
+
+    # compute T_i(s) using alpha values (see eq. (3)); 1e-10 added for numerical stability
+    weights = alpha * torch.cumprod(torch.cat([torch.ones((alpha.shape[0], 1)), 1. - alpha + 1e-10], -1), -1)[:, :-1]
+
+    # extract ray-wise RGB values by summing along the approximated path integral (eq. (3))
+    rgb_map = torch.sum(weights[..., None] * rgb, -2)  # [N_rays, 3]
+
+    mp = torch.sum(weights, -1)
+
+    # add background if specified
+    if bkg:
+        rgb_map = rgb_map + (1. - mp[..., None])
+    return rgb_map, weights
+
+
+def render_rays(ray_batch, coarse_model, forward, n_coarse_samples, perturb=0., n_fine_samples=0,
+                                                                                fine_model=None,
+                                                                                white_bkg=False,
+                                                                                noise=0.):
+    # extract dirs and origins from mini-batch
+    n_rays = ray_batch.shape[0]
+    r_origins, r_dirs = ray_batch[:, 0:3], ray_batch[:, 3:6]
+    viewdirs = ray_batch[:, -3:] if ray_batch.shape[-1] > 8 else None
+    bounds = torch.reshape(ray_batch[..., 6:8], [-1, 1, 2])
+    near, far = bounds[..., 0], bounds[..., 1]  # [-1,1]
+
+    # sample coarse points
+    t_samples = torch.linspace(0., 1., steps=n_coarse_samples)
+    s_vals = near * (1. - t_samples) + far * (t_samples)
+    s_vals = s_vals.expand([n_rays, n_coarse_samples])
+
+    # random perturbation of points tends to improve training
+    if perturb > 0.:
+        midpoints = .5 * (s_vals[..., 1:] + s_vals[..., :-1])
+        l = torch.cat([s_vals[..., :1], midpoints], -1)
+        u = torch.cat([midpoints, s_vals[..., -1:]], -1)
+
+        # rescale coarse points
+        t_rand = torch.rand(s_vals.shape)
+        s_vals = l + (u - l) * t_rand
+
+    pts = r_origins[..., None, :] + r_dirs[..., None, :] * s_vals[..., :, None]
+
+    # generate coarse rgb vals
+    raw = forward(pts, viewdirs, coarse_model)
+    rgb_map, weights = process_volume_info(raw, s_vals, r_dirs, noise, white_bkg)
+    rgb_c = rgb_map
+
+    # perform inverse sampling to get fine points
+    midpoints = .5 * (s_vals[..., 1:] + s_vals[..., :-1])
+    f_samples = inv_transform_sampling(midpoints, weights[..., 1:-1], n_fine_samples)
+
+    f_samples = f_samples.detach()
+    s_vals, _ = torch.sort(torch.cat([s_vals, f_samples], -1), -1)
+    pts = r_origins[..., None, :] + r_dirs[..., None, :] * s_vals[..., :, None]
+
+    # get fine rgb predictions
+    run_fn = coarse_model if fine_model is None else fine_model
+    raw = forward(pts, viewdirs, run_fn)
+
+    rgb, _ = process_volume_info(raw, s_vals, r_dirs, noise, white_bkg)
+
+    ret = {'rgb_map': rgb}
+    ret['rgb_c'] = rgb_c
+    return ret
 
 
 def load_dataset(args):
@@ -76,277 +269,14 @@ def load_dataset(args):
         return load_llff_data(args.data_dir)
 
 
-def compute_rays(h, w, f, pose):
-    #h = torch.tensor(h)
-    #w = torch.tensor(w)
-    #f = torch.tensor(f)
-
-    #pose = torch.tensor(pose)
-    #h = h.cuda()
-    #w = w.cuda()
-    #f = f.cuda()
-    #pose = pose.cuda()
-    # see: https://graphics.cs.wisc.edu/WP/cs559-fall2016/files/2016/12/shirley_chapter_4.pdf and
-    # https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-generating-camera-rays/generating-camera-rays
-
-    # spans from 0 to h - 1, row-wise
-    #y_grid = torch.linspace(0, h - 1, h).cuda()
-    y_grid = torch.linspace(0, h - 1, h)
-
-    # spans from 0 to w - 1, column-wise
-    x_grid = torch.linspace(0, w - 1, w)
-
-    # discretize image into hxw grid; note that meshgrid is implemented poorly, so we have to use numpy
-    x, y = torch.meshgrid(x_grid, y_grid)
-    x = x.t()
-    y = y.t()
-
-    # h = torch.from_numpy(h)
-    # w = torch.from_numpy(w)
-    # f = torch.from_numpy(f)
-
-    # compute direction (3D vector) of each ray using virtual pinhole model
-    d_x = (x - w * .5) / f
-    d_y = -(y - h * .5) / f
-    dirs = torch.stack([d_x, d_y, -torch.ones_like(x)], -1)
-
-    # now, we project each ray direction into world space using the camera pose
-    proj = dirs[..., np.newaxis, :] * pose[:3, :3]
-    dirs = torch.sum(proj, -1)
-
-    # last column of projection matrix contains origin of all rays
-    origins = pose[:3, -1].expand(dirs.shape)
-    return origins, dirs
-
-
-def process_volume_info(raw_rgba, t_samples, r_dirs, noise=0.0, bkg=False):
-    INF_DIST = 1e10
-    EPS = 1e-10  # for numerical stability (see: https://effectivemachinelearning.com/PyTorch/7._Numerical_stability_in_PyTorch)
-
-    # generate noise for volume channel (see p. 19) for more information
-    _noise = 0.0
-    if noise > 0.0:
-        _noise = torch.randn(raw_rgba[..., 3].shape) * noise
-
-    rgb = torch.sigmoid(raw_rgba[..., :3])
-    #_noise = torch.tensor(_noise).cuda()
-
-    # compute distances between samples (denotes as deltas in equation (3))
-    deltas = t_samples[..., 1:] - t_samples[..., :-1]
-    last_delta = torch.tensor([INF_DIST]).expand(deltas[..., :1].shape)
-    deltas = torch.cat([deltas, last_delta], -1)
-    deltas = deltas * torch.norm(r_dirs[..., None, :], dim=-1)
-
-    # alpha compositing; ensure that relu has already been applied!!
-    alpha = 1.0 - torch.exp(-torch.relu((raw_rgba[..., 3] + _noise)) * deltas)
-
-    # compute T_i(s) using alpha values (see eq. (3))
-    weights = torch.cat([torch.ones((alpha.shape[0], 1)), 1. - alpha + EPS], -1)
-
-    # have to use a roundabout way of computing cumprod because of the way it's not exclusive in pytorch
-    T_weights = alpha * torch.cumprod(weights, -1)[:, :-1]
-
-    # extract ray-wise RGB values by summing along the approximated path integral (eq. (3))
-    rgb_map = torch.sum(T_weights[..., None] * rgb, -2)
-
-    # add background if specified
-    if bkg:
-        # in RGB space, 1.0 is white
-        rgb_map = rgb_map + (1.0 - (torch.sum(T_weights, -1))[..., None])
-    return rgb_map, T_weights
-
-
-def inv_transform_sampling(pts, weights, n):
-    """
-    Get of sampled points and corresponding weights, we perform inverse transform sampling:
-    https://en.wikipedia.org/wiki/Inverse_transform_sampling. In essence, this technique allows us
-    to sample n points from the weight pdf.
-    """
-
-    # numerical stability
-    EPS = 1e-5
-    weights = weights + EPS
-
-    # map weights to a probability distribution
-    pdf = weights / torch.sum(weights, -1, keepdim=True)
-
-    # construct cdf (denote F) from pdf
-    cdf = torch.cumsum(pdf, -1)
-    cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], -1)
-
-    # uniformly sample points
-    unif_samp = torch.rand(list(cdf.shape[:-1]) + [n])
-
-    """
-    Invert the CDF and compute F^{-1}(U). This reduces to a searching for domain values of F that contain the 
-    values of U and then rescaling. See the following source for more information:
-    - http://www.columbia.edu/~ks20/4404-Sigman/4404-Notes-ITM.pdf 
-    - https://stephens999.github.io/fiveMinuteStats/inverse_transform_sampling.html 
-    - http://www.cse.psu.edu/~rtc12/CSE586/lectures/cse586samplingPreMCMC.pdf
-    """
-
-    unif_samp = unif_samp.contiguous()
-    # luckily, searchsorted implements this searching functionality!
-    i = torch.searchsorted(cdf, unif_samp, right=True)
-
-    # upper and lower bounds of U w.r.t. F
-    upper = torch.min((cdf.shape[-1] - 1) * torch.ones_like(i), i)
-    lower = torch.max(torch.zeros_like(i - 1), i - 1)
-    indices = torch.stack([lower, upper], -1)
-
-    # rescale input parameters to match shape of uniformly chosen points
-    _new_shape = [indices.shape[0], indices.shape[1], cdf.shape[-1]]
-    cdf = cdf.unsqueeze(1).expand(_new_shape)
-    cdf = torch.gather(cdf, 2, indices)
-    pts = pts.unsqueeze(1).expand(_new_shape)
-    pts = torch.gather(pts, 2, indices)
-
-    # rescale into [t_n, t_f] domain
-    scale = cdf[..., 1] - cdf[..., 0]
-    # need this for numerical stability
-    scale = torch.where(scale < EPS, torch.ones_like(scale), scale)
-    return (pts[..., 1] - pts[..., 0]) * ((unif_samp - cdf[..., 0]) / scale) + pts[..., 0]
-
-
-def render(rays, coarse_model, fine_model, bounds, args, n_rays=None):
-    if n_rays is None:
-        n_rays = args.n_rays
-
-    r_origins, r_dirs = rays
-
-    # represents theta and phi, as specified in the paper
-    d_vec = r_dirs / torch.norm(r_dirs, dim=-1, keepdim=True)
-    d_vec = torch.reshape(d_vec, [-1, 3]).float()
-
-    r_origins = r_origins.float()
-    r_dirs = r_dirs.float()
-
-    # partition [0, 1] using n points and rescale into [t_n, t_f]
-    samples = torch.linspace(0., 1., steps=args.n_samples)
-    _t_samples = bounds[0] * (1. - samples) + bounds[1] * samples
-    t_samples = _t_samples.expand([n_rays, args.n_samples])
-
-    # get n_rays * n_samples random samples in [0, 1]
-    t_r = torch.rand(t_samples.shape)
-
-    # rescale by computing the middle of each interval
-    midpoints = .5 * (t_samples[..., 1:] + t_samples[..., :-1])
-
-    # add back lowest and highest sample
-    u = torch.cat([midpoints, t_samples[..., -1:]], -1)
-    l = torch.cat([t_samples[..., :1], midpoints], -1)
-    t_samples = l + (u - l) * t_r
-
-    # compute the (x, y, z) coords of each timestep using ray origins and directions
-    # coords: (n_rays, 3) * (n_rays, n_samples) -> (n_rays, n_samples, 3)
-    c_coords = r_origins[..., None, :] + r_dirs[..., None, :] * t_samples[..., :, None]
-
-    # duplicate angle for each point
-    _d_vec = d_vec[..., None, :].expand(c_coords.shape)
-
-    # Returned from model; tensor of size n_rays x n_samples x 4
-    rgba = coarse_model(c_coords, _d_vec) if coarse_model is not None else None
-
-    # tensor of size n_rays x 3
-    rgb, weights = process_volume_info(rgba, t_samples, r_dirs, noise=args.noise, bkg=args.white_bkg)
-
-    # remove weights not used for hierarchical sampling
-    avg_pts = (t_samples[..., 1:] + t_samples[..., :-1]) / 2.0
-
-    fine_samples = inv_transform_sampling(avg_pts, weights[..., 1:-1], args.n_fine_samples)
-    fine_samples = fine_samples.detach()
-    # Combine coarse and fine samples; TODO: determine if this is right.
-    f_t_vals, _ = torch.sort(torch.cat([t_samples, fine_samples], -1), -1)
-
-    # compute coordinates, as shown above
-    f_coords = r_origins[..., None, :] + r_dirs[..., None, :] * f_t_vals[..., :, None]
-
-    f_d_vec = d_vec[..., None, :].expand(f_coords.shape)
-
-    # Returned from model; tensor of size n_rays x n_samples x 4
-    rgba_f = fine_model(f_coords, f_d_vec)
-
-    # tensor of size n_rays x 3
-    rgb_f, weights_f = process_volume_info(rgba_f, f_coords, r_dirs, noise=args.noise, bkg=args.white_bkg)
-    return rgb, rgb_f
-
-
-def render_full(render_poses, cam_params, save_dir, coarse_mode, fine_model, bounds, args):
-    height, width, f = cam_params
-
-    args = copy.deepcopy(args)
-    args.noise = 0.0
-
-    pred_ims = []
-    for i, pose_mat in enumerate(render_poses):
-        print('Rendering pose %d out of %d poses' % (i, len(render_poses)))
-        r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose_mat[:3, :4]).cuda())
-
-        if args.ndc:
-            r_origins, r_dirs = get_ndc(height, width, f, 1., r_origins, r_dirs)
-
-        h_grid = torch.linspace(0, height - 1, height).cuda()
-        w_grid = torch.linspace(0, width - 1, width).cuda()
-        grid = torch.meshgrid(h_grid, w_grid)
-        grid = torch.stack(grid, -1)
-
-        grid = torch.reshape(grid, [-1, 2])
-
-        batch_size = args.n_rays
-        n_batches = int(np.ceil((height * width) / batch_size))
-
-        # batching so that we don't saturate GPU memory
-        _d_seen_indices = []  # TODO: remove after testing
-        batch = []
-        for j in range(n_batches):
-            # print('batch %d of %d' % (j, n_batches))
-
-            batch_indices = np.arange((j * batch_size), min((j + 1) * batch_size, grid.shape[0]))
-
-            # if args.debug:
-            #    _d_seen_indices.extend(list(batch_indices))
-
-            batch_pixels = grid[batch_indices.reshape((-1,))].long()
-
-            _r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
-            _r_dirs = r_dirs[batch_pixels[:, 0], batch_pixels[:, 1]]
-            batch_rays = torch.stack([_r_origins, _r_dirs], 0)
-
-            _, rgb_f = render(batch_rays, coarse_mode, fine_model, bounds, args, batch_indices.shape[0])
-            # print(batch_rays.shape)
-            # print(rgb_f.shape)
-            batch.append(rgb_f.cpu().numpy())
-            # pred_ims.append(rgb_f.cpu().numpy())
-
-        # print(batch)
-        im = np.concatenate(batch, 0).reshape((height, width, 3))
-        # print(im.shape)
-        pred_ims.append(im)
-        # convert to 8bytes
-        im_8 = (255 * np.clip(im, 0, 1)).astype(np.uint8)
-        filename = os.path.join(save_dir, '{:04d}.png'.format(i))
-        imageio.imwrite(filename, im_8)
-
-    pred_ims = np.stack(pred_ims, 0)
-    return pred_ims
-
-
 def decayed_learning_rate(step, decay_steps, initial_lr, decay_rate=0.1):
     return initial_lr * (decay_rate ** (step / decay_steps))
 
 
 def main():
-    torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    parser = config_parser()
+    args = parser.parse_args()
 
-    args = parse_settings()
-
-    '''
-    images: numpy array of shape (total_ims, im_height, im_width, rgba)
-    poses: numpy array of shape (total_ims, 4, 4)
-    cam_params: list of the form [H, W, f]
-    i_split: list of the form [train_indices, val_indices, test_indices]
-    bounds: list of the form [near bound, far bound]
-    '''
     images, poses, render_poses, cam_params, i_split, bounds = load_dataset(args)
 
     if args.dtype == 'llff':
@@ -373,77 +303,70 @@ def main():
     else:
         train_idx, val_idx, test_idx = i_split
 
-    if torch.cuda.is_available():
-        dev = torch.device('cuda')
-    else:
-        dev = torch.device('cpu')
-
-    # unpack camera intrinsics
-    height, width, f = cam_params
+    # Cast intrinsics to right types
+    height, width, focal = cam_params
     height, width = int(height), int(width)
+    # hwf = [H, W, focal]
 
-    coarse_model = Model(xyz_L=args.L_pos, angle_L=args.L_ang).to(dev)
-    fine_model = Model(xyz_L=args.L_pos, angle_L=args.L_ang).to(dev)
+    near, far = bounds
 
-    params = list(coarse_model.parameters()) + list(fine_model.parameters())
+    if args.render_test:
+        render_poses = np.array(poses[test_idx])
 
-    optimizer = torch.optim.Adam(params=params, lr=args.lr, betas=(0.9, 0.999))
-    steps = args.iter
-    step = 0
-
-    os.makedirs(os.path.join(args.base_dir, args.name), exist_ok=True)
+    # Create log dir and copy the config file
+    basedir = args.base_dir
+    name = args.name
+    os.makedirs(os.path.join(basedir, name), exist_ok=True)
     os.makedirs(os.path.join(args.save_dir, args.name), exist_ok=True)
 
-    render_poses = torch.tensor(render_poses).to(dev)
-    images = torch.tensor(images).to(dev)
-    poses = torch.tensor(poses).to(dev)
-    # move data to the gpu
-    #if torch.cuda.is_available():
-    #    coarse_model = coarse_model.cuda()
-    #    fine_model = fine_model.cuda()
-    #    images = torch.Tensor(images).cuda()
-    #    poses = torch.Tensor(poses).cuda()
-    #elif not args.debug:
-    #    raise ValueError("CUDA is not available")
-    # training loop
-    for i in range(steps):
-        step += 1
+    render_kwargs_train, render_kwargs_test, start, grad_vars, optimizer = create_model(args)
+    global_step = start
 
-        step_time = time.time()
+    bds_dict = {
+        'near': near,
+        'far': far,
+    }
+    render_kwargs_train.update(bds_dict)
+    render_kwargs_test.update(bds_dict)
 
-        # select random image
+    render_poses = torch.Tensor(render_poses).to(device)
+
+    n_rays = args.n_rays
+    images = torch.Tensor(images).to(device)
+    poses = torch.Tensor(poses).to(device)
+
+    iters = 200000
+
+    start = start + 1
+    for i in trange(start, iters):
+        time0 = time.time()
+
+        # Random from one image
         im_idx = np.random.choice(train_idx)
         im = images[im_idx]
-
-        # extract projection matrix:
-        # (https://blender.stackexchange.com/questions/38009/3x4-camera-matrix-from-blender-camera)
         pose = poses[im_idx, :3, :4]
 
-        # both origins and orientations are needed to determine a ray
-        r_origins, r_dirs = compute_rays(height, width, f, torch.tensor(pose))
-
-        if args.ndc:
-            r_origins, r_dirs = get_ndc(height, width, f, 1., r_origins, r_dirs)
+        r_origins, r_dirs = compute_rays(height, width, focal, torch.tensor(pose))  # (H, W, 3), (H, W, 3)
 
         grid = None
+
+        # crop as warm-up; tends to improve rendering performance and optimization
         if i < args.precrop_iters:
-            dH = int(height // 2 * args.precrop_frac)
-            dW = int(width // 2 * args.precrop_frac)
+            delta_h = int(height // 2 * args.precrop_frac)
+            delta_w = int(width // 2 * args.precrop_frac)
             grid = torch.stack(
                 torch.meshgrid(
-                    torch.linspace(height // 2 - dH, height // 2 + dH - 1, 2 * dH),
-                    torch.linspace(width // 2 - dW, width // 2 + dW - 1, 2 * dW)
+                    torch.linspace(height // 2 - delta_h, height // 2 + delta_h - 1, 2 * delta_h),
+                    torch.linspace(width // 2 - delta_w, width // 2 + delta_w - 1, 2 * delta_w)
                 ), -1)
         else:
-            # select a random subset of rays from a H x W grid
             h_grid = torch.linspace(0, height - 1, height)
             w_grid = torch.linspace(0, width - 1, width)
-            grid = torch.meshgrid(h_grid, w_grid)
-            grid = torch.stack(grid, -1)
+            grid = torch.stack(torch.meshgrid(h_grid, w_grid), -1)
 
         # (H x W, 2) tensor containing all possible pixels
         grid = torch.reshape(grid, [-1, 2])
-        batch_indices = np.random.choice(grid.shape[0], size=[args.n_rays], replace=False)
+        batch_indices = np.random.choice(grid.shape[0], size=[n_rays], replace=False)
         batch_pixels = grid[batch_indices].long()
 
         r_origins = r_origins[batch_pixels[:, 0], batch_pixels[:, 1]]
@@ -451,69 +374,107 @@ def main():
         batch_rays = torch.stack([r_origins, r_dirs], 0)
         batch_pixels = im[batch_pixels[:, 0], batch_pixels[:, 1]]
 
-        #if torch.cuda.is_available():
-        #    batch_rays = batch_rays.cuda()
-        #    batch_pixels = batch_pixels.cuda()
-        #elif not args.debug:
-        #    raise ValueError("CUDA is not available")
-
         # renders rays into RGB values
-        rgb_c, rgb_f = render(batch_rays, coarse_model, fine_model, bounds, args)
+        rgb, extras = render(height, width, focal, chunk=args.b_size, rays=batch_rays, **render_kwargs_train)
 
+        # get coarse rgb data
+        rgb_c = extras['rgb_c']
         optimizer.zero_grad()
+        loss = torch.mean((rgb - batch_pixels) ** 2)
+        loss = loss + torch.mean((rgb_c - batch_pixels) ** 2)
 
-        loss = torch.mean((rgb_c - batch_pixels) ** 2)
-        loss = loss if rgb_f is None else loss +torch.mean((rgb_f - batch_pixels) ** 2)
-
+        # backprop (~0.4 seconds per step)!
         loss.backward()
         optimizer.step()
 
-        step_time = time.time() - step_time
+        # constants for exponential learning rate decay
         DECAY_RATE = 0.1
         DECAY_SIZE = 1000
 
         # update learning rate: https://tinyurl.com/48makybr using exponential decay
-        lr = decayed_learning_rate(step, DECAY_SIZE * args.lr_decay, args.lr, decay_rate=DECAY_RATE)
+        lr = decayed_learning_rate(i, DECAY_SIZE * args.lr_decay, args.lr, decay_rate=DECAY_RATE)
         for g in optimizer.param_groups:
             g['lr'] = lr
 
-        with torch.no_grad():
-            if step % args.update_freq == 0:
-                print('Step: ' + str(step))
-                print('Loss: ' + str(loss.item()))
-                print('Step time: ' + str(step_time))
+        if i % args.save_freq == 0:
+            path = os.path.join(basedir, name, '{:06d}.tar'.format(i))
+            torch.save({
+                'step': i,
+                'fine_model_state_dict': render_kwargs_train['fine_model'].state_dict(),
+                'coarse_model_state_dict': render_kwargs_train['coarse_model'].state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }, path)
 
-                # source: https://stackoverflow.com/questions/58216000/get-total-amount-of-free-gpu-memory-and-available-using-pytorch
-                t = torch.cuda.get_device_properties(0).total_memory
-                r = torch.cuda.memory_reserved(0)
-                a = torch.cuda.memory_allocated(0)
-                f = r - a  # free inside reserved
+        if i % args.video_freq == 0 and i > 0:
+            with torch.no_grad():
+                frames = render_full(render_poses, [height, width, focal], args.b_size, render_kwargs_test, args.save_dir)
+            moviebase = os.path.join(args.save_dir, name, '{}_spiral_{:06d}_'.format(name, i))
+            imageio.mimwrite(moviebase + 'rgb.mp4', cont_to_byte8_im(frames), fps=30, quality=8)
 
-                #print('Total GPU Memory: ' + str(t))
-                #print('Reserved GPU Memory: ' + str(r))
-                #print('Free GPU Memory: ' + str(f))
+        if i % args.print_freq == 0:
+            tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}")
 
-            if step % args.video_freq == 0:
-                if torch.cuda.is_available():
-                    render_poses = render_poses.cuda()
-                else:
-                    raise ValueError("CUDA is not available")
-                pred_frames = render_full(render_poses, [height, width, f], args.save_dir, coarse_model, fine_model,
-                                          bounds, args)
-                imageio.mimwrite(os.path.join(args.save_dir, args.name, 'test_vid_{:d}.mp4'.format(step)),
-                                 (255 * np.clip(pred_frames, 0, 1)).astype(np.uint8), fps=30, quality=8)
-                print('Writing video at', os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)))
 
-            if step % args.save_freq == 0:
-                Path('./results/lego/''{:d}.pt'.format(i)).touch()
-                path = os.path.join(args.base_dir, args.name, '{:d}.pt'.format(i))
-                torch.save({
-                    'iter': step,
-                    'model_coarse_dict': coarse_model.state_dict(),
-                    'model_fine_dict': fine_model.state_dict(),
-                    'optimizer_dict': optimizer.state_dict(),
-                }, path)
-                print('Saved checkpoints at', path)
+def config_parser():
+    parser = configargparse.ArgumentParser()
+    parser.add_argument('--config', is_config_file=True,
+                        help='config file path')
+    parser.add_argument("--name", type=str,
+                        help='experiment name')
+    parser.add_argument("--base_dir", type=str, default='./logs/',
+                        help='where to store ckpts and logs')
+    parser.add_argument("--data_dir", type=str, default='./data/llff/fern',
+                        help='input data directory')
+    parser.add_argument('--save_dir', type=str, default='./logs')
+
+    parser.add_argument("--n_rays", type=int, default=4096)
+    parser.add_argument("--lr", type=float, default=5e-4)
+    parser.add_argument("--lr_decay", type=int, default=250)
+
+    parser.add_argument("--b_size", type=int, default=1024 * 32)
+    parser.add_argument("--amort_size", type=int, default=1024 * 64,)
+    parser.add_argument("--no_reload", action='store_true',
+                        help='do not reload weights from saved ckpt')
+    parser.add_argument("--ft_path", type=str, default=None,
+                        help='specific weights npy file to reload for coarse network')
+
+    parser.add_argument("--n_coarse_samples", type=int, default=64,
+                        help='number of coarse samples per ray')
+    parser.add_argument("--n_fine_samples", type=int, default=0,
+                        help='number of additional fine samples per ray')
+    parser.add_argument("--perturb", type=float, default=1.)
+    parser.add_argument("--noise", type=float, default=0.)
+
+    parser.add_argument("--precrop_iters", type=int, default=0,)
+    parser.add_argument("--precrop_frac", type=float, default=.5)
+
+    parser.add_argument("--testskip", type=int, default=8)
+
+    parser.add_argument("--white_bkg", action='store_true')
+    parser.add_argument("--half_res", action='store_true')
+
+    parser.add_argument("--factor", type=int, default=8,
+                        help='downsample factor for LLFF images')
+    parser.add_argument("--no_ndc", action='store_true',
+                        help='do not use normalized device coordinates (set for non-forward facing scenes)')
+    parser.add_argument("--spherify", action='store_true',
+                        help='set for spherical 360 scenes')
+    parser.add_argument("--llffhold", type=int, default=8,
+                        help='will take every 1/N images as LLFF test set, paper uses 8')
+
+    parser.add_argument("--render_only", action='store_true')
+    parser.add_argument("--render_test", action='store_true',)
+    parser.add_argument("--render_factor", type=int, default=0)
+
+    parser.add_argument("--print_freq", type=int, default=100)
+    parser.add_argument("--save_freq", type=int, default=10000,
+                        help='frequency of weight ckpt saving')
+    parser.add_argument("--video_freq", type=int, default=5000)
+
+    parser.add_argument("--dtype", type=str, default='llff',
+                        help='llff or blender')
+
+    return parser
 
 
 if __name__ == '__main__':

@@ -274,6 +274,7 @@ def load_llff_data(topdir):
     print("LLFF data loaded")
     return images,poses[:,:3,:4],render_poses,poses[0,:3,-1],i_test, bounds
 
+
 def get_ndc(height, width, focal, near, r_ori, r_dir):
     #FROM: https://github.com/bmild/nerf/blob/master/run_nerf_helpers.py
     tm = -(near + r_ori[...,2]) / r_dir[...,2]

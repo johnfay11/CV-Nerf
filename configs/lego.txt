@@ -1,16 +1,16 @@
-name = lego
-save_dir = ./logs
-data_dir = ./data/nerf_synthetic/lego/
+name = blender_paper_lego
+base_dir = ./logs
+data_dir = ./data/nerf_synthetic/lego
 dtype = blender
 
+white_bkg = True
 lr_decay = 500
 
-n_samples = 64
-n_fine_samples = 64
+n_coarse_samples = 64
+n_fine_samples = 128
 n_rays = 1024
-
-white_bkg = True
-half_res = True
 
 precrop_iters = 500
 precrop_frac = 0.5
+
+half_res = True
