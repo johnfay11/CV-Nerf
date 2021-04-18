@@ -335,7 +335,7 @@ def main():
     images = torch.Tensor(images).to(device)
     poses = torch.Tensor(poses).to(device)
 
-    iters = 200000
+    iters = 100000
 
     start = start + 1
     for i in trange(start, iters):
