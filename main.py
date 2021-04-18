@@ -138,7 +138,7 @@ def create_model(args):
     forward_fn = lambda inputs, viewdirs, network_fn: model_forward(inputs, viewdirs, network_fn,
                                                                         freq_xyz_fn=lambda v: xyz_embedder.embed(v),
                                                                         freq_angle_fn=lambda v: ang_embedder.embed(v),
-                                                                        amort_chunk=args.amort_chunk)
+                                                                        amort_chunk=args.amort_size)
 
     # Create optimizer
     optimizer = torch.optim.Adam(params=grad_vars, lr=args.lr, betas=(0.9, 0.999))
