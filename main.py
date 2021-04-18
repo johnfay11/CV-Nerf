@@ -112,7 +112,7 @@ def render_full(render_poses, cam_params, ck, render_kwargs, save_dir=None, fact
     frames = []
 
     for i, c2w in enumerate(tqdm(render_poses)):
-        rgb, _ = render(height, width, focal, poses=render_poses, chunk=ck, c2w=c2w[:3, :4], **render_kwargs)
+        rgb, _ = render(height, width, focal, chunk=ck, pose=c2w[:3, :4], **render_kwargs)
         frames.append(rgb.cpu().numpy())
 
         if save_dir is not None:
