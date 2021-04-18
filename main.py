@@ -467,7 +467,7 @@ def config_parser():
     parser.add_argument("--render_factor", type=int, default=0)
 
     parser.add_argument("--print_freq", type=int, default=100)
-    parser.add_argument("--save_freq", type=int, default=10000,
+    parser.add_argument("--save_freq", type=int, default=1,
                         help='frequency of weight ckpt saving')
     parser.add_argument("--video_freq", type=int, default=5000)
 
