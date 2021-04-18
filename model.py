@@ -1,9 +1,11 @@
 import torch as torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 STD_CHUNK_SIZE = 65536
 
+to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
 
 def model_forward(xyz, angles, fn, freq_xyz_fn, freq_angle_fn, amort_chunk=STD_CHUNK_SIZE):
     def custom_reshape(fn, ck):
