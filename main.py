@@ -378,7 +378,7 @@ def main():
     images = torch.Tensor(images).to(device)
     poses = torch.Tensor(poses).to(device)
 
-    iters = 200000 + 1
+    iters = 100000
 
     start = start + 1
     for i in trange(start, iters):
@@ -539,7 +539,7 @@ def config_parser():
                         help='frequency of weight ckpt saving')
     parser.add_argument("--i_testset", type=int, default=50000,
                         help='frequency of testset saving')
-    parser.add_argument("--i_video", type=int, default=500)
+    parser.add_argument("--i_video", type=int, default=5000)
 
     parser.add_argument("--dtype", type=str, default='llff',
                         help='llff or blender')
