@@ -450,7 +450,7 @@ def main():
             # Turn on testing mode
             with torch.no_grad():
                 rgbs = render_full(render_poses, [height, width, focal], args.chunk, render_kwargs_test, args.save_dir)
-                print('Writing video at', os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(step)))
+                print('Writing video at', os.path.join(args.save_dir, 'test_vid_{:d}.mp4'.format(i)))
 
             print('Done, saving', rgbs.shape)
             moviebase = os.path.join(args.save_dir, name, '{}_spiral_{:06d}_'.format(name, i))
