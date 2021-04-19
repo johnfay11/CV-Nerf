@@ -456,15 +456,15 @@ def main():
             moviebase = os.path.join(args.save_dir, name, '{}_spiral_{:06d}_'.format(name, i))
             imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
 
-        if i % args.i_testset == 0 and i > 0:
-            testsavedir = os.path.join(basedir, name, 'testset_{:06d}'.format(i))
-            os.makedirs(testsavedir, exist_ok=True)
-            print('test poses shape', poses[test_idx].shape)
-            with torch.no_grad():
-                render_full(torch.Tensor(poses[test_idx]).to(device), [height, width, focal], args.chunk,
-                            render_kwargs_test,
-                            gt_imgs=images[test_idx], savedir=testsavedir)
-            print('Saved test set')
+        #if i % args.i_testset == 0 and i > 0:
+        #    testsavedir = os.path.join(basedir, name, 'testset_{:06d}'.format(i))
+        #    os.makedirs(testsavedir, exist_ok=True)
+        #    print('test poses shape', poses[test_idx].shape)
+        #    with torch.no_grad():
+        #        render_full(torch.Tensor(poses[test_idx]).to(device), [height, width, focal], args.chunk,
+        #                    render_kwargs_test,
+        #                    gt_imgs=images[test_idx], savedir=testsavedir)
+        #    print('Saved test set')
 
         if i % args.i_print == 0:
             tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}")
