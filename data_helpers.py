@@ -151,10 +151,10 @@ def load_llff(topdir,factor = None):
             i = imageio.imread(file)
 
         if not factor is None:
-            i = rescale(i,scale=1./factor,anti_aliasing=True)
+            i = rescale(i/255.,scale=1./factor,anti_aliasing=True)
 
         # normalize the images
-        images_read.append(i/255.)
+        images_read.append(i)
 
         
     images = np.stack(images_read,-1) #stack all read images together in proper form
