@@ -180,9 +180,9 @@ def load_llff(topdir,factor = None):
         poses[:2,4,:] = np.array(sh[:2]).reshape([2,1])
         poses[2,4,:] = poses[2,4,:] * 1./factor
 
-    print('poses: ', poses.shape)
-    print('bounds: ', bounds.shape)
-    print('images:', images.shape)
+    # print('poses: ', poses.shape)
+    # print('bounds: ', bounds.shape)
+    # print('images:', images.shape)
     return poses, bounds, images
 
 def view_matrix(z,up,pos):
@@ -303,13 +303,13 @@ def load_llff_data(topdir,factor=8):
             #images, poses, render_poses, hwf, i_test, bounds
     print("LLFF data loaded")
     print('images: ', images.shape)
-    print(images[0])
+    # print(images[0])
     print('poses: ', poses.shape)
-    print(pose[0])
+    # print(pose[0])
     print('render_poses: ', len(render_poses))
-    print(render_poses[0])
+    # print(render_poses[0])
     print('bounds: ', bounds.shape)
-    print(bounds[0])
+    # print(bounds[0])
     return images,pose,render_poses,hwf,i_test, bounds
 
 
