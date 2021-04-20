@@ -163,7 +163,6 @@ def load_llff(topdir,factor = None):
         images_read.append(i/255.)
     
         dirname = os.path.join(topdir,'fern_resized')
-        os.makedirs(dirname)
         j = 0
         for im in images_read:
             fname = 'image_'+str(j)+'png'
