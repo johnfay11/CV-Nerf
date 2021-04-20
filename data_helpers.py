@@ -166,9 +166,9 @@ def load_llff(topdir,factor = None):
         os.makedirs(dirname)
         j = 0
         for im in images_read:
-            fname = 'image_'+str(j)
+            fname = 'image_'+str(j)+'png'
             f = os.path.join(dirname,fname)
-            imageio.imwrite(f,im)
+            imageio.imwrite(f,im,format='png')
             j += 1
 
         # print('before')
