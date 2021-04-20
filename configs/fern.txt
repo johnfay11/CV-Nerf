@@ -14,5 +14,5 @@ n_rays = 1024
 precrop_iters = 500
 precrop_frac = 0.5
 
-no_ndc = True
+no_ndc = False
 
