@@ -524,7 +524,7 @@ def config_parser():
 
     parser.add_argument("--factor", type=int, default=8,
                         help='downsample factor for LLFF images')
-    parser.add_argument("--no_ndc", action='store_true',
+    parser.add_argument("--no_ndc", action='store_true', default = True,
                         help='do not use normalized device coordinates (set for non-forward facing scenes)')
     parser.add_argument("--spherify", action='store_true',
                         help='set for spherical 360 scenes')
