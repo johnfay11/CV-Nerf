@@ -147,17 +147,22 @@ def load_llff(topdir,factor = None):
         print("Image: " + str(j))
         # print(file)
         if file[-3:] == 'png':
-            i = imread(file,ignoregamma=True) 
+            i = imageio.imread(file,ignoregamma=True) 
         else:
-            i = imread(file)
+            i = imageio.imread(file)
 
         if not factor is None:
+
             sc = 1./factor 
             print('scale: ', sc)
-            i = rescale(i,scale=sc)
+            images_read.append(cv2.resize(i, (i.shape[1]*sc,i.shape[0]*sc), interpolation=cv2.INTER_AREA))
+            #i = rescale(i,scale=sc)
+        else:
+            images_read.append(i)
 
-        # normalize the images
-        images_read.append(i/255.)
+        images_read = [i/255. for i in images_read]
+        # # normalize the images
+        # images_read.append(i/255.)
 
         
     images = np.stack(images_read,-1) #stack all read images together in proper form
@@ -168,6 +173,9 @@ def load_llff(topdir,factor = None):
         poses[:2,4,:] = np.array(sh[:2]).reshape([2,1])
         poses[2,4,:] = poses[2,4,:] * 1./factor
 
+    print('poses: ', poses.shape)
+    print('bounds: ', bounds.shape)
+    print('images:', images.shape)
     return poses, bounds, images
 
 def view_matrix(z,up,pos):
