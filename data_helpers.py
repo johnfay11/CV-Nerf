@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import cv2
 from skimage.transform import rescale
+from skimage.io import imread
 
 # translation by t: https://www.cs.cornell.edu/courses/cs4620/2010fa/lectures/03transforms3d.pdf
 trans_t = lambda t: torch.Tensor([
@@ -146,15 +147,15 @@ def load_llff(topdir,factor = None):
         print("Image: " + str(j))
         # print(file)
         if file[-3:] == 'png':
-            i = imageio.imread(file,ignoregamma=True) 
+            i = imread(file,ignoregamma=True) 
         else:
-            i = imageio.imread(file)
+            i = imread(file)
 
         if not factor is None:
-            i = rescale(i/255.,scale=1./factor,anti_aliasing=True)
+            i = rescale(i,scale=1./factor,anti_aliasing=True)
 
         # normalize the images
-        images_read.append(i)
+        images_read.append(i/255.)
 
         
     images = np.stack(images_read,-1) #stack all read images together in proper form
