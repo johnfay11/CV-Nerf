@@ -165,7 +165,7 @@ def load_llff(topdir,factor = None):
         dirname = os.path.join(topdir,'fern_resized')
         j = 0
         for im in images_read:
-            fname = 'image_'+str(j)+'png'
+            fname = 'image_'+str(j)+'.png'
             f = os.path.join(dirname,fname)
             imageio.imwrite(f,im,format='png')
             j += 1
