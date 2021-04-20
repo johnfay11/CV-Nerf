@@ -10,8 +10,7 @@ n_coarse_samples = 64
 n_fine_samples = 128
 n_rays = 1024
 
-precrop_iters = 500
-precrop_frac = 0.5
+noise = 1.
 
 no_ndc = False
 
