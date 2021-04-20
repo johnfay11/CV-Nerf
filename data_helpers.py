@@ -151,7 +151,7 @@ def load_llff(topdir,factor = None):
             i = imageio.imread(file)
 
         if not factor is None:
-            i = skimage.transform.rescale(i,scale=1./factor,anti_aliasing=True)
+            i = rescale(i,scale=1./factor,anti_aliasing=True)
 
         # normalize the images
         images_read.append(i/255.)
