@@ -160,7 +160,12 @@ def load_llff(topdir,factor = None):
         else:
             images_read.append(i)
 
+        print('before')
+        print(images_read[0])
         images_read = [i/255. for i in images_read]
+        print('after')
+        print(images_read[0])
+
         # # normalize the images
         # images_read.append(i/255.)
 
@@ -290,10 +295,20 @@ def load_llff_data(topdir,factor=8):
 
     images = images.astype(np.float32)
     poses = poses.astype(np.float32)
+    pose = poses[:,:3,:4]
+    hwf = poses[0,:3,-1]
 
             #images, poses, render_poses, hwf, i_test, bounds
     print("LLFF data loaded")
-    return images,poses[:,:3,:4],render_poses,poses[0,:3,-1],i_test, bounds
+    print('images: ', images.shape)
+    print(images[0])
+    print('poses: ', poses.shape)
+    print(pose[0])
+    print('render_poses: ', len(render_poses))
+    print(render_poses[0])
+    print('bounds: ', bounds.shape)
+    print(bounds[0])
+    return images,pose,render_poses,hwf,i_test, bounds
 
 
 def get_ndc(height, width, focal, near, r_ori, r_dir):
@@ -314,12 +329,3 @@ def get_ndc(height, width, focal, near, r_ori, r_dir):
     r_dir = torch.stack([dir0,dir1,dir2],-1)
 
     return r_ori, r_dir
-
-def main():
-    topdir = '/Users/danielawiepert/Downloads/nerf_example_data/nerf_llff'
-    images,poses,render_poses,hwf,i_test,bounds = load_llff_data(topdir,factor=8)
-    print('outputs')
-
-
-if __name__ == "__main__":
-    main()
