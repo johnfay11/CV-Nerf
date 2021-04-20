@@ -113,7 +113,7 @@ def render(H, W, focal, chunk=1024 * 32, rays=None, c2w=None, ndc=True,
     sh = rays_d.shape  # [..., 3]
     if ndc:
         # for forward facing scenes
-        rays_o, rays_d = ndc_rays(H, W, focal, 1., rays_o, rays_d)
+        rays_o, rays_d = get_ndc(H, W, focal, 1., rays_o, rays_d)
 
     # Create ray batch
     rays_o = torch.reshape(rays_o, [-1, 3]).float()
@@ -524,7 +524,7 @@ def config_parser():
 
     parser.add_argument("--factor", type=int, default=8,
                         help='downsample factor for LLFF images')
-    parser.add_argument("--no_ndc", action='store_true', default = True,
+    parser.add_argument("--no_ndc", action='store_true',
                         help='do not use normalized device coordinates (set for non-forward facing scenes)')
     parser.add_argument("--spherify", action='store_true',
                         help='set for spherical 360 scenes')
