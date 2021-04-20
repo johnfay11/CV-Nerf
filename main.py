@@ -113,7 +113,7 @@ def render(H, W, focal, chunk=1024 * 32, rays=None, c2w=None, ndc=True,
     sh = rays_d.shape  # [..., 3]
     if ndc:
         # for forward facing scenes
-        rays_o, rays_d = get_ndcs(H, W, focal, 1., rays_o, rays_d)
+        rays_o, rays_d = get_ndc(H, W, focal, 1., rays_o, rays_d)
 
     # Create ray batch
     rays_o = torch.reshape(rays_o, [-1, 3]).float()
