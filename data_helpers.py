@@ -135,48 +135,32 @@ def load_llff(topdir,factor = None):
     
     # for each file in imgdir, if the file ends with png,jpg(JPG), add to list
     images = []
-    j = 0 
     for file in os.listdir(imgdir):
-        j += 1
-        print("Image: " + str(j))
         # TODO: double check this is returning the last 3 files
-        if file[-3:] == 'png':
-            i = imageio.imread(os.path.join(imgdir,file),ignoregamma=True)
-            if not factor is None: 
-                sc = 1./factor 
-                #print('scale: ', sc)
-                i = cv2.resize(i, (int(i.shape[1]*sc),int(i.shape[0]*sc)), interpolation=cv2.INTER_AREA)
-            images.append(i/255.)
-        elif file[-3:] == 'jpg' or file[-3:] == 'JPG':
-            i = imageio.imread(os.path.join(imgdir,file))
-            if not factor is None: 
-                sc = 1./factor 
-                #print('scale: ', sc)
-                i = cv2.resize(i, (int(i.shape[1]*sc),int(i.shape[0]*sc)), interpolation=cv2.INTER_AREA)
-            images.append(i/255.)
-            
+        if file[-3:] == 'png' or file[-3:] == 'jpg' or file[-3:] == 'JPG':
+            images.append(os.path.join(imgdir, file))
  
-    # images_read = []
-    # j = 0
-    # for file in images:
-    #     j +=1
-    #     print("Image: " + str(j))
-    #     # print(file)
-    #     if file[-3:] == 'png':
-    #         i = imageio.imread(file,ignoregamma=True) 
-    #     else:
-    #         i = imageio.imread(file)
+    images_read = []
+    j = 0
+    for file in images:
+        j +=1
+        print("Image: " + str(j))
+        # print(file)
+        if file[-3:] == 'png':
+            i = imageio.imread(file,ignoregamma=True) 
+        else:
+            i = imageio.imread(file)
 
-    #     if not factor is None:
+        if not factor is None:
 
-    #         sc = 1./factor 
-    #         #print('scale: ', sc)
-    #         i = cv2.resize(i, (int(i.shape[1]*sc),int(i.shape[0]*sc)), interpolation=cv2.INTER_AREA)
-    #         # images_read.append(cv2.resize(i, (int(i.shape[1]*sc),int(i.shape[0]*sc)), interpolation=cv2.INTER_AREA))
-    #         #i = rescale(i,scale=sc)
-    #     # else:
-    #     #     images_read.append(i)
-    #     images_read.append(i/255.)
+            sc = 1./factor 
+            #print('scale: ', sc)
+            i = cv2.resize(i, (int(i.shape[1]*sc),int(i.shape[0]*sc)), interpolation=cv2.INTER_AREA)
+            # images_read.append(cv2.resize(i, (int(i.shape[1]*sc),int(i.shape[0]*sc)), interpolation=cv2.INTER_AREA))
+            #i = rescale(i,scale=sc)
+        # else:
+        #     images_read.append(i)
+        images_read.append(i/255.)
 
         # print('before')
         # print(images_read[0])
@@ -188,20 +172,19 @@ def load_llff(topdir,factor = None):
         # images_read.append(i/255.)
 
         
-    images = np.stack(images,-1) #stack all read images together in proper form
+    images = np.stack(images_read,-1) #stack all read images together in proper form
     print("stack finished")
 
     if not factor is None: 
-        sh = images[0].shape
-        poses[:2, 4, :] = np.array(sh[:2]).reshape([2, 1])
-        poses[2, 4, :] = poses[2, 4, :] * 1./factor
+        sh = images_read[0].shape
+        poses[:2,4,:] = np.array(sh[:2]).reshape([2,1])
+        poses[2,4,:] = poses[2,4,:] * 1./factor
 
     # print('poses: ', poses.shape)
     # print('bounds: ', bounds.shape)
     # print('images:', images.shape)
     return poses, bounds, images
 
-#  adapted from: https://github.com/bmild/nerf/blob/master/load_llff.py
 def view_matrix(z,up,pos):
     # z:camera eye - target point
     # up: average pose
@@ -218,7 +201,6 @@ def view_matrix(z,up,pos):
     m = np.stack([v0,v1,v2,pos],1) #orientation matrix
     return m 
 
-# adapted from: https://github.com/bmild/nerf/blob/master/load_llff.py
 def avg_poses(poses):
     """
     Takes in poses and returns the camera-to-world transformation matrix
@@ -239,7 +221,6 @@ def avg_poses(poses):
 
     return c2w 
 
-#adapted from: https://github.com/bmild/nerf/blob/master/load_llff.py
 def recenter(poses):
     poses2 = poses+0
     b = np.reshape([0,0,0,1.],[1,4]) 
@@ -252,7 +233,6 @@ def recenter(poses):
     poses2[:,:3,:4] = poses[:,:3,:4]
     return poses2
 
-# adapted from: https://github.com/bmild/nerf/blob/master/load_llff.py
 def render_path_spiral(c2w,up,rads,focal,zdelta,zrate,rots,N):
     render_poses = []
     r  = np.array(list(rads) + [1.])
@@ -267,7 +247,6 @@ def render_path_spiral(c2w,up,rads,focal,zdelta,zrate,rots,N):
         render_poses.append(render)
     return render_poses
 
-# custom llff loader modified from NERF implementation: https://github.com/bmild/nerf/blob/master/load_llff.py
 def load_llff_data(topdir,factor=8):
     """
     takes in directory with all the data, gets poses, bounds, and images, renders poses
@@ -282,8 +261,8 @@ def load_llff_data(topdir,factor=8):
     images = np.moveaxis(images,-1,0).astype(np.float32)
     bounds = np.moveaxis(bounds,-1,0).astype(np.float32)
 
-    #rescale bounds by .75
-    sc = 1./(bounds.min() * .75)
+    #rescale 
+    sc = 1./(np.min(bounds) * .75)
     poses[:,:3,3] *= sc
     bounds *= sc
 
@@ -298,8 +277,8 @@ def load_llff_data(topdir,factor=8):
     up = up/np.linalg.norm(up)
 
     #find focus depth: 
-    close_d = bounds.min()*0.9
-    inf_d = bounds.max()*5. 
+    close_d = np.min(bounds)*0.9
+    inf_d = np.max(bounds)*5. 
     mean_dz = 1./(((1.-.75)/close_d + .75/inf_d))
     focal = mean_dz
 
@@ -324,13 +303,13 @@ def load_llff_data(topdir,factor=8):
             #images, poses, render_poses, hwf, i_test, bounds
     print("LLFF data loaded")
     print('images: ', images.shape)
-    print(images[0])
+    # print(images[0])
     print('poses: ', poses.shape)
     # print(pose[0])
     print('render_poses: ', len(render_poses))
     # print(render_poses[0])
     print('bounds: ', bounds.shape)
-    # print(bounds[0])
+    #print(bounds[0])
     return images,pose,render_poses,hwf,i_test, bounds
 
 
