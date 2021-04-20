@@ -530,9 +530,9 @@ def config_parser():
                         help='set for spherical 360 scenes')
     parser.add_argument("--llffhold", type=int, default=8,
                         help='will take every 1/N images as LLFF test set, paper uses 8')
-    parser.add_argument("--factor",default=None,
+    parser.add_argument("--factor",default=8,
                         help='downsamples images by this factor')
-                        
+
     parser.add_argument("--i_print", type=int, default=100,
                         help='frequency of console printout and metric loggin')
     parser.add_argument("--i_img", type=int, default=500,
