@@ -152,7 +152,9 @@ def load_llff(topdir,factor = None):
             i = imread(file)
 
         if not factor is None:
-            i = rescale(i,scale=1./factor,anti_aliasing=True)
+            sc = 1./factor 
+            print('scale:' sc)
+            i = rescale(i,scale=sc,anti_aliasing=True)
 
         # normalize the images
         images_read.append(i/255.)
