@@ -309,7 +309,7 @@ def load_dataset(args):
         return load_blender_data(args.data_dir, half_res=args.half_res, testskip=args.testskip, bkg=args.white_bkg)
     else:
         print('Loading LLFF data.')
-        return load_llff_data(args.data_dir)
+        return load_llff_data(args.data_dir,args.factor)
 
 
 def decayed_learning_rate(step, decay_steps, initial_lr, decay_rate=0.1):
@@ -530,7 +530,9 @@ def config_parser():
                         help='set for spherical 360 scenes')
     parser.add_argument("--llffhold", type=int, default=8,
                         help='will take every 1/N images as LLFF test set, paper uses 8')
-
+    parser.add_argument("--factor",default=None,
+                        help='downsamples images by this factor')
+                        
     parser.add_argument("--i_print", type=int, default=100,
                         help='frequency of console printout and metric loggin')
     parser.add_argument("--i_img", type=int, default=500,

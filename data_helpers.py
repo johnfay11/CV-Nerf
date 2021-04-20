@@ -5,6 +5,7 @@ import json
 import torch
 import numpy as np
 import cv2
+from skimage.transform import rescale
 
 # translation by t: https://www.cs.cornell.edu/courses/cs4620/2010fa/lectures/03transforms3d.pdf
 trans_t = lambda t: torch.Tensor([
@@ -108,7 +109,7 @@ def load_blender_data(basedir, half_res=False, testskip=1, bkg=False):
 
 # custom llff loader modified from NERF implementation: https://github.com/bmild/nerf/blob/master/load_llff.py
 # allows us to use synthetic data
-def load_llff(topdir):
+def load_llff(topdir,factor = None):
     # location of the file containing poses and bounds - file created using COLMAP and imgs2poses.py from https://github.com/Fyusion/LLFF
     # format of this file:
     # np array (N,17) - each row, contains all pose matrix data + 2 depth values
@@ -129,7 +130,8 @@ def load_llff(topdir):
     bounds = bounds.transpose([1, 0])
 
     # create list of images to read (contains image paths)
-    imgdir = os.path.join(topdir, 'images')
+    imgdir = os.path.join(topdir,'images')
+    
     # for each file in imgdir, if the file ends with png,jpg(JPG), add to list
     images = []
     for file in os.listdir(imgdir):
@@ -148,12 +150,20 @@ def load_llff(topdir):
         else:
             i = imageio.imread(file)
 
+        if not factor is None:
+            i = skimage.transform.rescale(i,scale=1./factor,anti_aliasing=True)
+
         # normalize the images
         images_read.append(i/255.)
 
         
     images = np.stack(images_read,-1) #stack all read images together in proper form
     print("stack finished")
+
+    if not factor is None: 
+        sh = images_read[0].shape
+        poses[:2,4,:] = np.array(sh[:2]).reshape([2,1])
+        poses[2,4,:] = poses[2,4,:] * 1./factor
 
     return poses, bounds, images
 
@@ -219,13 +229,13 @@ def render_path_spiral(c2w,up,rads,focal,zdelta,zrate,rots,N):
         render_poses.append(render)
     return render_poses
 
-def load_llff_data(topdir):
+def load_llff_data(topdir,factor=8):
     """
     takes in directory with all the data, gets poses, bounds, and images, renders poses
     Returns images, poses, rendered poses, height,width,focal point matrix, i_test, and bounds
     """
 
-    poses, bounds, images = load_llff(topdir)
+    poses, bounds, images = load_llff(topdir,factor=factor)
 
     #deals with issues w/ order of rotation matrix in poses + moving variable dim to axis 0
     poses = np.concatenate([poses[:,1:2,:], -poses[:,0:1,:],poses[:,2:,:]],1)
@@ -293,3 +303,12 @@ def get_ndc(height, width, focal, near, r_ori, r_dir):
     r_dir = torch.stack([dir0,dir1,dir2],-1)
 
     return r_ori, r_dir
+
+def main():
+    topdir = '/Users/danielawiepert/Downloads/nerf_example_data/nerf_llff'
+    images,poses,render_poses,hwf,i_test,bounds = load_llff_data(topdir,factor=8)
+    print('outputs')
+
+
+if __name__ == "__main__":
+    main()
