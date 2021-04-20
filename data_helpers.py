@@ -154,7 +154,7 @@ def load_llff(topdir,factor = None):
         if not factor is None:
 
             sc = 1./factor 
-            print('scale: ', sc)
+            #print('scale: ', sc)
             images_read.append(cv2.resize(i, (int(i.shape[1]*sc),int(i.shape[0]*sc)), interpolation=cv2.INTER_AREA))
             #i = rescale(i,scale=sc)
         else:
