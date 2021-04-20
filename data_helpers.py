@@ -281,20 +281,9 @@ def load_llff_data(topdir,factor=8):
     poses = np.moveaxis(poses,-1,0).astype(np.float32)
     images = np.moveaxis(images,-1,0).astype(np.float32)
     bounds = np.moveaxis(bounds,-1,0).astype(np.float32)
-    b = bounds.flatten()
 
     #rescale bounds by .75
-    print('bounds before: ')
-    print('min: '+ str(np.min(bounds)))
-    print(str(bounds.min()))
-    print('max: '+ str(np.max(bounds)))
-    print(str(bounds.max()))
-
-    print('bounds now:')
-    print('min: '+ str(b.min()))
-    print('max: '+ str(b.max()))
-
-    sc = 1./(b.min() * .75)
+    sc = 1./(bounds.min() * .75)
     poses[:,:3,3] *= sc
     bounds *= sc
 
@@ -309,8 +298,8 @@ def load_llff_data(topdir,factor=8):
     up = up/np.linalg.norm(up)
 
     #find focus depth: 
-    close_d = b.min()*0.9
-    inf_d = b.max()*5. 
+    close_d = bounds.min()*0.9
+    inf_d = bounds.max()*5. 
     mean_dz = 1./(((1.-.75)/close_d + .75/inf_d))
     focal = mean_dz
 
@@ -335,7 +324,7 @@ def load_llff_data(topdir,factor=8):
             #images, poses, render_poses, hwf, i_test, bounds
     print("LLFF data loaded")
     print('images: ', images.shape)
-    # print(images[0])
+    print(images[0])
     print('poses: ', poses.shape)
     # print(pose[0])
     print('render_poses: ', len(render_poses))
