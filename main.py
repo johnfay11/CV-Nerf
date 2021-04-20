@@ -333,7 +333,7 @@ def main():
                 train_idx.append(i)
         train_idx = np.array(train_idx)
 
-        if not render_kwargs_train['ndc']:
+        if args.no_ndc:
             b = np.array(bounds).flatten()
             near = np.min(b) * .9
             far = np.max(b) * 1.
