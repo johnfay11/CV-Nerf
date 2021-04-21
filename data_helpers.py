@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 from skimage.transform import rescale
 from skimage.io import imread
+from skimage.color import rgba2rgb
 
 # translation by t: https://www.cs.cornell.edu/courses/cs4620/2010fa/lectures/03transforms3d.pdf
 trans_t = lambda t: torch.Tensor([
@@ -160,6 +161,8 @@ def load_llff(topdir,factor = None):
             #i = rescale(i,scale=sc)
         # else:
         #     images_read.append(i)
+        if i.shape[2] == 4:
+            i = rgba2rgb(i)
         images_read.append(i/255.)
     
         # dirname = os.path.join(topdir,'fern_resized')
