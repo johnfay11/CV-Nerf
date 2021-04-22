@@ -1,8 +1,59 @@
-import numpy as np
 import torch as torch
 import torch.nn as nn
-import torch.nn.functional as func
-from math import sin,cos,pi
+import torch.nn.functional as F
+import numpy as np
+
+STD_CHUNK_SIZE = 65536
+
+to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
+
+def model_forward(xyz, angles, fn, freq_xyz_fn, freq_angle_fn, amort_chunk=STD_CHUNK_SIZE):
+    def custom_reshape(fn, ck):
+        if ck is None:
+            return fn
+
+        def ret(inputs):
+            return torch.cat([fn(inputs[i:i + ck]) for i in range(0, inputs.shape[0], ck)], 0)
+
+        return ret
+
+    x_vec = torch.reshape(xyz, [-1, xyz.shape[-1]])
+    embedded = freq_xyz_fn(x_vec)
+
+    if angles is not None:
+        dirs = angles[:, None].expand(xyz.shape)
+        dirs_vec = torch.reshape(dirs, [-1, dirs.shape[-1]])
+        embedded_dirs = freq_angle_fn(dirs_vec)
+        embedded = torch.cat([embedded, embedded_dirs], -1)
+
+    outputs_flat = custom_reshape(fn, amort_chunk)(embedded)
+    outputs = torch.reshape(outputs_flat, list(xyz.shape[:-1]) + [outputs_flat.shape[-1]])
+    return outputs
+
+
+class FreqEmbedding:
+    def __init__(self, freqs, dim=3):
+        embed_fns = []
+        d = dim
+        out_dim = 0
+
+        embed_fns.append(lambda x: x)
+        out_dim += d
+
+        # pre-compute high frequency input encoding (see paper)
+        components = 2. ** torch.linspace(0., freqs - 1, steps=freqs)
+        for freq in components:
+            embed_fns.append(lambda x, p_fn=torch.sin, freq=freq: p_fn(x * freq))
+            out_dim += d
+
+            embed_fns.append(lambda x, p_fn=torch.cos, freq=freq: p_fn(x * freq))
+            out_dim += d
+
+        self.embed_fns = embed_fns
+        self.out_dim = out_dim
+
+    def embed(self, inputs):
+        return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
 
 
 """
@@ -22,84 +73,60 @@ to represent non-Lambertian effects. As shown in Fig. 4, a model trained without
 view dependence (only x as input) has difficulty representing specularities.
 """
 
-
 class Model(nn.Module):
     def __init__(self, xyz_L=10, angle_L=4):
         super(Model, self).__init__()
         self.xyz_L = xyz_L
         self.angle_L = angle_L
 
-        self.l1 = nn.Linear(Model._encoding_dim(3, self.xyz_L), 256)
+        self.l1 = nn.Linear(Model._encoding_dim(3, self.xyz_L) + 3, 256)
         self.l2 = nn.Linear(256, 256)
         self.l3 = nn.Linear(256, 256)
+
         self.l4 = nn.Linear(256, 256)
         self.l5 = nn.Linear(256, 256)
+        self.l6 = nn.Linear(256 + Model._encoding_dim(3, self.xyz_L) + 3, 256)
 
-        self.l6 = nn.Linear(256 + Model._encoding_dim(3, self.xyz_L), 256)
         self.l7 = nn.Linear(256, 256)
         self.l8 = nn.Linear(256, 256)
+        self.l9 = nn.Linear(256, 256)
 
-        self.l9 = nn.Linear(256, 257)
-
-        self.l10 = nn.Linear(256 + Model._encoding_dim(3, self.angle_L), 128)
+        self.l_alpha = nn.Linear(256, 1)
+        self.l10 = nn.Linear(256 + Model._encoding_dim(3, self.angle_L) + 3, 128)
         self.l11 = nn.Linear(128, 3)
 
     @staticmethod
     def _encoding_dim(num_comp, L):
         return 2 * num_comp * L
 
-    @staticmethod
-    def _pos_encoding(pos, out, L):
-        """
-        :param pos: pos positions, or angle unit vector (assumed dtype is python list)
-        :param L: defines number of terms in encoding (2*L terms)
-        :return: FloatTensor input for network
-        """
-        for i in range(pos.shape[0]):
-            for j in range(L):
-                out[(i * L) + j] = (sin((2 ** j) * pi * pos[i]))
-                out[(i * L) + j + 1] = (cos((2 ** j) * pi * pos[i]))
-        return out
-
-    def forward(self, xyz, view_angle):
+    def forward(self, x):
         """
         :param xyz: (x,y,z) position coordinate
         :param view_angle: view angle unit vector
             (both params assumed to be python lists)
         """
+        xyz, ang = torch.split(x,
+                               [3 + Model._encoding_dim(3, self.xyz_L), 3 + Model._encoding_dim(3, self.angle_L)],
+                               dim=-1)
 
-        X = torch.zeros(xyz.shape[:-1] + Model._encoding_dim(3, self.xyz_L))
-        X_ang = torch.zeros(xyz.shape[:-1] + Model._encoding_dim(3, self.xyz_L))
-
-        for ray in range(X.shape[0]):
-            for pt in range(X.shape[1]):
-                X[ray, pt] = Model._pos_encoding(xyz[ray, pt], X[ray, pt], self.xyz_L)
-
-        out = func.relu(self.l1(X))
-        out = func.relu(self.l2(out))
-        out = func.relu(self.l3(out))
-        out = func.relu(self.l4(out))
-        out = func.relu(self.l5(out))
+        out = F.relu(self.l1(xyz))
+        out = F.relu(self.l2(out))
+        out = F.relu(self.l3(out))
+        out = F.relu(self.l4(out))
+        out = F.relu(self.l5(out))
 
         # skip connection that concatenates X to the fifth layer’s activation
-        out = torch.cat((X, out))
+        out = torch.cat((xyz, out), -1)
 
-        out = func.relu(self.l6(out))
-        out = func.relu(self.l7(out))
-        out = func.relu(self.l8(out))
+        out = F.relu(self.l6(out))
+        out = F.relu(self.l7(out))
+        out = F.relu(self.l8(out))
 
+        density = self.l_alpha(out)
         out = self.l9(out)
-        density = out[0]
-        feat_vec = out[1:]
 
-        out = feat_vec
+        out = torch.cat([out, ang], -1)
+        out = F.relu(self.l10(out))
+        rgb = self.l11(out)
 
-        # this is a subtle optimization
-        for ray in range(X.shape[0]):
-            X_ang[ray, :] = Model._pos_encoding(view_angle, X[ray, 0], self.angle_L)
-
-        out = torch.cat([out, X_ang], -1)
-        out = func.relu(self.l9(out))
-        out = self.l10(out)
-        rgb = func.sigmoid(out)
         return torch.cat([rgb, density], -1)

@@ -1,0 +1,15 @@
+name = skull
+save_dir = ./logs
+data_dir = ./skull
+dtype = llff
+
+lr_decay = 500
+factor = 8
+
+n_coarse_samples = 64
+n_fine_samples = 128
+n_rays = 1024
+
+noise = 1.
+
+no_ndc = False
