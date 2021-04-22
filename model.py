@@ -5,32 +5,7 @@ import numpy as np
 
 STD_CHUNK_SIZE = 65536
 
-to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
-
-def model_forward(xyz, angles, fn, freq_xyz_fn, freq_angle_fn, amort_chunk=STD_CHUNK_SIZE):
-    def custom_reshape(fn, ck):
-        if ck is None:
-            return fn
-
-        def ret(inputs):
-            return torch.cat([fn(inputs[i:i + ck]) for i in range(0, inputs.shape[0], ck)], 0)
-
-        return ret
-
-    x_vec = torch.reshape(xyz, [-1, xyz.shape[-1]])
-    embedded = freq_xyz_fn(x_vec)
-
-    if angles is not None:
-        dirs = angles[:, None].expand(xyz.shape)
-        dirs_vec = torch.reshape(dirs, [-1, dirs.shape[-1]])
-        embedded_dirs = freq_angle_fn(dirs_vec)
-        embedded = torch.cat([embedded, embedded_dirs], -1)
-
-    outputs_flat = custom_reshape(fn, amort_chunk)(embedded)
-    outputs = torch.reshape(outputs_flat, list(xyz.shape[:-1]) + [outputs_flat.shape[-1]])
-    return outputs
-
-
+# performs position encoding
 class FreqEmbedding:
     def __init__(self, freqs, dim=3):
         embed_fns = []
@@ -130,3 +105,31 @@ class Model(nn.Module):
         rgb = self.l11(out)
 
         return torch.cat([rgb, density], -1)
+
+
+def net_forward(inputs, dirs, f, embed_fn, embeddirs_fn, netchunk=1024 * 64):
+    inputs_flat = torch.reshape(inputs, [-1, inputs.shape[-1]])
+    embedded = embed_fn(inputs_flat)
+
+    if dirs is not None:
+        input_dirs = dirs[:, None].expand(inputs.shape)
+        input_dirs_flat = torch.reshape(input_dirs, [-1, input_dirs.shape[-1]])
+        embedded_dirs = embeddirs_fn(input_dirs_flat)
+        embedded = torch.cat([embedded, embedded_dirs], -1)
+
+    outputs_flat = combine(f, netchunk)(embedded)
+    outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
+    return outputs
+
+
+def combine(f, chunk):
+    if chunk is None:
+        return f
+
+    def ret(inputs):
+        return torch.cat([f(inputs[i: i + chunk]) for i in range(0, inputs.shape[0], chunk)], 0)
+    return ret
+
+
+def to_byte(x):
+    return (255 * np.clip(x, 0, 1)).astype(np.uint8)
