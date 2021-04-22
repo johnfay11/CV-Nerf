@@ -1,15 +1,10 @@
-# CV-Nerf
-CV-Final project
-
-# NeRF or Nothing 
-
+# NeRF or Nothing (CS 1430 Final Project)
+This repository contains a reimplementation of "NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis" in Pytorch. 
 
 Authors: Ross Briden, John Fay, Daniela Wiepert 
 
 
-
 # TODO
-
 ## Data
 - [x] Support for ingesting Blender config files (necessary for synthetic data). Support for Blender data looks 
       significantly easier than support for LLFF data.
